@@ -21,11 +21,34 @@ open build/Strata.app
 ```
 
 The script compiles the Swift package, renders the app icon, assembles the bundle and
-signs it ad-hoc with the hardened runtime. You can also open `Package.swift` in Xcode.
+signs it with the hardened runtime and App Sandbox (ad-hoc unless you set a signing
+identity, see [Permissions](#permissions)). You can also open `Package.swift` in Xcode.
+
+| Variable | Effect |
+|---|---|
+| `STRATA_SIGN_IDENTITY` | Code-signing identity (default: ad-hoc `-`). A stable identity keeps privacy grants across rebuilds. |
+| `STRATA_BUILD_DIR` | Output folder instead of `./build`, e.g. to build while Strata is running. |
+| `STRATA_UNSANDBOXED=1` | Debug builds only; used by `scripts/screenshots.sh`. Refused for release. |
+
+### Development
 
 ```sh
 swift test                    # unit tests: stretch timing, slicing, clip remapping, file I/O, mixer
-scripts/screenshots.sh        # regenerate docs/screenshots (debug build captures its own window)
+scripts/screenshots.sh        # regenerate docs/screenshots (STRATA_SCREENSHOT_DIR=… to preview elsewhere)
+```
+
+`scripts/screenshots.sh` builds an unsandboxed debug copy in a temporary folder and drives
+it through scripted scenes using the demo kit and a synthetic input signal. The app
+captures its own window, so no Screen Recording or Microphone permission is needed. That
+scripting hook is compiled out of release builds.
+
+```
+Sources/Strata/        App, Model, Audio, Studio (controller), UI
+Sources/StrataAtomics/ C11 atomics shared by the audio thread and UI
+Tests/StrataTests/     XCTest suite
+Resources/             Info.plist, entitlements (sandboxed + dev-only unsandboxed)
+scripts/               build-app.sh, screenshots.sh, make-icon.swift
+docs/screenshots/      README images
 ```
 
 ### Permissions
@@ -101,6 +124,9 @@ Assistant also works for local use.
 - Stereo waveform with an overview strip. Zooms from the whole file down to individual
   samples, with RMS + peak rendering and optional zero-crossing snap.
 - Destructive edits (trim, delete, silence, reverse, normalize, fades, gain), all undoable.
+  Timeline clips that use the sample are remapped, so they keep playing the same audio.
+- Preview the selection one-shot or looped. A looping preview follows the selection live:
+  drag a new region or adjust an edge and playback moves to it without stopping.
 - Slicing: automatic transient detection with a sensitivity control, equal divisions,
   beat-grid slicing, and manual markers. Click a slice in the ruler to audition it
   (MPC-style). Send slices to a new track or to the Library, or ⌥-drag a selection
@@ -111,9 +137,13 @@ Assistant also works for local use.
 - Document-based (`.strata` packages: JSON + bit-exact 32-bit float CAF audio), with autosave,
   versions, full undo/redo.
 - Export the mixdown (loop or whole song) or individual samples as 24-bit WAV/AIFF.
-  Bounce the loop back into the Library.
+  Bounce the loop back into the Library. Bounces render pitch-preserving stretches at
+  full quality, even if they are still processing for playback.
+- Launch opens a new project. Closing the last window keeps Strata running, and clicking
+  the Dock icon opens a new project.
 
-Help ▸ **Load Demo Kit** synthesises a small kit so you can try everything without a mic.
+Help ▸ **Load Demo Kit** synthesises a small kit (drums, bass, chords, pad, shaker) so you
+can try everything without a mic.
 Help ▸ **Keyboard Shortcuts** (⌘/) lists the shortcuts: Space play, R record, L loop,
 K metronome, S split, V/B/T tools, M add slice, P preview, Z zoom to fit…
 

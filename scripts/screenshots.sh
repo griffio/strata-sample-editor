@@ -2,13 +2,17 @@
 # Regenerates the README screenshots in docs/screenshots using the debug build's
 # self-capture hook (no Screen Recording permission needed). Uses the demo kit and a
 # synthetic input signal, so no microphone access is requested.
+#
+# Builds into a temporary folder, so ./build/Strata.app (possibly running) is untouched.
+# STRATA_SCREENSHOT_DIR overrides the output folder (e.g. to preview without committing).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/docs/screenshots"
+OUT="${STRATA_SCREENSHOT_DIR:-$ROOT/docs/screenshots}"
 TMP="$(mktemp -d)"
 cd "$ROOT"
-STRATA_UNSANDBOXED=1 scripts/build-app.sh debug >/dev/null   # capture hook writes outside the sandbox
-BIN="build/Strata.app/Contents/MacOS/Strata"
+# Unsandboxed debug build: the capture hook writes images outside the sandbox container.
+STRATA_BUILD_DIR="$TMP/build" STRATA_UNSANDBOXED=1 scripts/build-app.sh debug >/dev/null
+BIN="$TMP/build/Strata.app/Contents/MacOS/Strata"
 
 shot() {   # name demo steps
   STRATA_SNAPSHOT="$TMP/$1" STRATA_DEMO="$2" STRATA_STEPS="$3" STRATA_SIZE=1600x1000 STRATA_QUIT=1 "$BIN" >/dev/null 2>&1
@@ -26,5 +30,5 @@ shot slicing    1 size,fit,slice,wait,wait,edzoom,selslice,wait      sample-edit
 shot record     1 size,fit,devsource,arm,rec,wait,wait,wait,wait     loop-recording
 shot stretch    1 size,fit,tonal,stretchbeats,wait,wait              time-stretch
 shot slicetrack 1 size,slice,wait,slicetrack,fit,wait,wait           slices-to-track
-cp build/AppIcon-1024.png "$OUT/icon.png" && sips -Z 256 "$OUT/icon.png" >/dev/null
+cp "$TMP/build/AppIcon-1024.png" "$OUT/icon.png" && sips -Z 256 "$OUT/icon.png" >/dev/null
 rm -rf "$TMP"
