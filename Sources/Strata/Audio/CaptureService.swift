@@ -502,10 +502,10 @@ final class CaptureService: ObservableObject {
 
     /// Feeds a 44.1 kHz synthetic source through the full pipeline (resampling, meters,
     /// scope, history, recorder) without touching hardware or privacy permissions.
-    func debugStartTestSignal() {
+    func debugStartTestSignal(sourceUID: String? = nil) {
         stopCurrent()
         generation += 1
-        source = .device(uid: "test-signal")
+        source = .device(uid: sourceUID ?? "test-signal")
         sourceChannelCount = 2
         sourceSampleRate = 44_100
         firstChannel = 0

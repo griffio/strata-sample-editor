@@ -5,12 +5,21 @@ import CoreGraphics
 /// UI states and writes window captures (an app may always capture its own windows).
 /// Optional: STRATA_DEMO=1 loads the demo kit first.
 enum DebugSnapshot {
+    #if DEBUG
+    private static var started = false
+    #endif
+
     static func runIfRequested(studio: Studio) {
         #if DEBUG
         let env = ProcessInfo.processInfo.environment
-        guard let prefix = env["STRATA_SNAPSHOT"] else { return }
+        guard let prefix = env["STRATA_SNAPSHOT"], !started else { return }
+        started = true
         let steps = (env["STRATA_STEPS"] ?? "base").split(separator: ",").map(String.init)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            // Discard documents restored from earlier scripted runs.
+            for doc in NSDocumentController.shared.documents where !doc.windowControllers.contains(where: { $0.window === studio.window }) {
+                discard(doc)
+            }
             if env["STRATA_DEMO"] == "1" && studio.project.tracks.isEmpty { studio.loadDemo() }
             if let w = studio.window, env["STRATA_SIZE"] != nil {
                 let parts = env["STRATA_SIZE"]!.split(separator: "x").compactMap { Double($0) }
@@ -25,7 +34,11 @@ enum DebugSnapshot {
 
     private static func run(steps: [String], index: Int, studio: Studio, prefix: String) {
         guard index < steps.count else {
-            if ProcessInfo.processInfo.environment["STRATA_QUIT"] == "1" { exit(0) }
+            if ProcessInfo.processInfo.environment["STRATA_QUIT"] == "1" {
+                // Leave no autosaved Untitled documents behind for the next launch.
+                NSDocumentController.shared.documents.forEach(discard)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
+            }
             return
         }
         let step = steps[index]
@@ -55,6 +68,40 @@ enum DebugSnapshot {
         case "grab": studio.grab(seconds: 2)
         case "arm": if let t = studio.project.tracks.first { studio.toggleArm(t.id) }
         case "wait": break
+        case "undostate":
+            let um = studio.undoManager
+            NSLog("%@", "[snapshot] canUndo=\(um?.canUndo ?? false) action=\(um?.undoActionName ?? "-") docEdited=\(NSDocumentController.shared.documents.first?.isDocumentEdited ?? false) docs=\(NSDocumentController.shared.documents.count) windowEdited=\(studio.window?.isDocumentEdited ?? false) changeCountUntitled=\(NSDocumentController.shared.documents.first?.fileURL == nil) autosave=\(NSDocumentController.shared.documents.first?.autosavedContentsFileURL?.lastPathComponent ?? "-")")
+        case "size":
+            NSApp.activate(ignoringOtherApps: true)
+            studio.window?.makeKeyAndOrderFront(nil)
+            if let w = studio.window, let spec = ProcessInfo.processInfo.environment["STRATA_SIZE"] {
+                let parts = spec.split(separator: "x").compactMap { Double($0) }
+                if parts.count == 2 {
+                    let screen = w.screen?.visibleFrame ?? .zero
+                    w.setFrame(NSRect(x: screen.minX + 40, y: screen.maxY - parts[1] - 40, width: parts[0], height: parts[1]), display: true)
+                }
+            }
+        case "fit": studio.zoomToFit()
+        case "selslice":
+            if let s = studio.editorSample, s.sliceRanges.count > 4 { studio.editor.selection = s.sliceRanges[3] }
+        case "edzoom":
+            if let s = studio.editorSample {
+                studio.editor.framesPerPixel = Double(s.frameCount) / Double(studio.editor.width) / 2.6
+                studio.editor.scrollFrame = Double(s.frameCount) * 0.22
+            }
+        case "tonal":
+            if studio.project.tracks.count > 4, let c = studio.project.tracks[4].clips.first {
+                studio.selectedClips = [c.id]
+                studio.updateSelectedClips("Stretch") { $0.stretch = 1.25; $0.stretchMode = .tonal }
+                studio.openClipInEditor(c.id)
+            }
+        case "stretchbeats":
+            if studio.project.tracks.count > 3, let c = studio.project.tracks[3].clips.last {
+                studio.updateClip(c.id, "Stretch") { $0.stretch = 0.5 }
+            }
+        case "slicetrack": studio.slicesToTrack()
+        case "devsource":
+            studio.capture.debugStartTestSignal(sourceUID: AudioDevices.shared.inputs.first { $0.isVirtual }?.uid)
         case "undo":
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 let um = studio.undoManager
@@ -76,6 +123,15 @@ enum DebugSnapshot {
             NSLog("%@", "[snapshot] step=\(step) playing=\(studio.isPlaying) pos=\(String(format: "%.3f", studio.positionSeconds)) master=\(studio.meters.master) engineRunning=\(studio.engine.isRunning)")
             run(steps: steps, index: index + 1, studio: studio, prefix: prefix)
         }
+    }
+
+    /// Closes a scripted-run document without saving and removes its autosave.
+    private static func discard(_ doc: NSDocument) {
+        guard doc.fileURL == nil else { doc.close(); return }
+        if let url = doc.autosavedContentsFileURL { try? FileManager.default.removeItem(at: url) }
+        doc.updateChangeCount(.changeCleared)
+        doc.autosavedContentsFileURL = nil
+        doc.close()
     }
 
     static func capture(studio: Studio, to path: String) {
