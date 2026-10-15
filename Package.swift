@@ -15,10 +15,12 @@ let package = Package(
         .executableTarget(
             name: "Strata",
             dependencies: ["StrataAtomics"],
-            path: "Sources/Strata",
-            swiftSettings: [
-                .unsafeFlags(["-Ounchecked"], .when(configuration: .release))
-            ]
+            path: "Sources/Strata"
+        ),
+        .testTarget(
+            name: "StrataTests",
+            dependencies: ["Strata"],
+            path: "Tests/StrataTests"
         )
     ]
 )

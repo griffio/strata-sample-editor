@@ -88,6 +88,29 @@ final class TrackLaneNSView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // MARK: - Accessibility
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    override func accessibilityLabel() -> String? { "\(track.name) lane, \(track.clips.count) clips" }
+
+    override func accessibilityChildren() -> [Any]? {
+        let fmt = MusicalTimeFormatter(project: project)
+        return track.clips.map { clip -> NSAccessibilityElement in
+            let el = ClipAccessibilityElement()
+            el.onPress = { [weak self] in self?.studio.selectClip(clip.id, extend: false); self?.needsDisplay = true }
+            el.setAccessibilityRole(.button)
+            var label = "\(clip.name), bar \(fmt.string(clip.start)), \(String(format: "%.2f", clip.duration / project.secondsPerBar)) bars"
+            if clip.isStretched { label += ", stretched \(Int((clip.stretch * 100).rounded())) percent" }
+            if clip.muted { label += ", muted" }
+            if studio.selectedClips.contains(clip.id) { label += ", selected" }
+            el.setAccessibilityLabel(label)
+            el.setAccessibilityParent(self)
+            el.setAccessibilityFrameInParentSpace(rect(for: clip))
+            return el
+        }
+    }
+
     func update(track: Track, index: Int) {
         if track.id != trackID {
             Self.registry.unregister(trackID, view: self)
@@ -776,4 +799,10 @@ func handleTimelineScroll(_ event: NSEvent, viewport vp: TimelineViewport, locat
 
 extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
+}
+
+/// Accessibility proxy for a clip drawn inside a lane.
+final class ClipAccessibilityElement: NSAccessibilityElement {
+    var onPress: (() -> Void)?
+    override func accessibilityPerformPress() -> Bool { onPress?(); return onPress != nil }
 }

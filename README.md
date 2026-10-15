@@ -17,7 +17,11 @@ open build/Strata.app
 ```
 
 The script compiles the Swift package, renders the app icon, assembles the bundle and
-signs it ad-hoc. You can also open `Package.swift` in Xcode.
+signs it ad-hoc with the hardened runtime. You can also open `Package.swift` in Xcode.
+
+```sh
+swift test                    # unit tests: stretch timing, slicing, clip remapping, file I/O, mixer
+```
 
 > Ad-hoc signed builds get a new code signature each time, so macOS may ask again for
 > Microphone / Screen & System Audio Recording permission after a rebuild.
@@ -60,7 +64,7 @@ signs it ad-hoc. You can also open `Package.swift` in Xcode.
 - Clip inspector: gain, fades, stretch %, fit-to-bars, stretch mode.
 
 **Project & export**
-- Document-based (`.strata` packages: JSON + lossless ALAC audio), with autosave,
+- Document-based (`.strata` packages: JSON + bit-exact 32-bit float CAF audio), with autosave,
   versions, full undo/redo.
 - Export the mixdown (loop or whole song) or individual samples as 24-bit WAV/AIFF.
   Bounce the loop back into the Library.
@@ -78,4 +82,8 @@ K metronome, S split, V/B/T tools, M add slice, P preview, Z zoom to fit…
 | `Audio/CaptureService` | Hardware input via `AVAudioSinkNode` and system audio via ScreenCaptureKit both feed a lock-free SPSC ring buffer. A 5 ms consumer converts to 48 kHz and fans out to meters, scope, grab history, monitor ring and the recorder. Host-time stamps give latency-compensated timeline placement. |
 | `Audio/TimeStretcher` | WSOLA and spectral engines, rendered offline and cached per clip region and ratio. Clips play as varispeed while a render is in flight or a drag is in progress. |
 | `Studio/` | Per-window controller: transport, undo, editing, slicing, recording. |
-| `UI/` | SwiftUI shell plus custom AppKit/Core Graphics views for the lanes, ruler and waveform editor. |
+| `UI/` | SwiftUI shell plus custom AppKit/Core Graphics views for the lanes, ruler and waveform editor. All custom controls expose VoiceOver labels, values and adjust actions; animations respect Reduce Motion. |
+
+**Energy:** the output engine starts on demand and stops after a few idle seconds, the UI
+refresh drops from 60 Hz to 4 Hz when nothing is moving, and hidden (occluded) windows stop
+redrawing.

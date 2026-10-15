@@ -160,17 +160,7 @@ extension Studio {
             for t in p.tracks.indices {
                 var out: [Clip] = []
                 for c in p.tracks[t].clips {
-                    guard targets.contains(c.id), time > c.start + 0.002, time < c.end - 0.002 else { out.append(c); continue }
-                    let splitSrc = Int(c.sourceFrame(atTimelineTime: time).rounded())
-                    var left = c, right = c
-                    left.sourceLength = splitSrc - c.sourceStart
-                    left.fadeOut = 0
-                    right.id = UUID()
-                    right.start = time
-                    right.sourceStart = splitSrc
-                    right.sourceLength = c.sourceStart + c.sourceLength - splitSrc
-                    right.fadeIn = 0
-                    guard left.sourceLength > 16, right.sourceLength > 16 else { out.append(c); continue }
+                    guard targets.contains(c.id), let (left, right) = Self.splitClip(c, at: time) else { out.append(c); continue }
                     out += [left, right]
                     created.insert(right.id)
                     count += 1
@@ -241,21 +231,56 @@ extension Studio {
     }
 
     /// Splits each selected clip at the transients found inside its source region.
+    /// Splits one clip at a timeline time; nil when the cut is too close to an edge.
+    static func splitClip(_ c: Clip, at time: Double) -> (Clip, Clip)? {
+        guard time > c.start + 0.002, time < c.end - 0.002 else { return nil }
+        let splitSrc = Int(c.sourceFrame(atTimelineTime: time).rounded())
+        var left = c, right = c
+        left.sourceLength = splitSrc - c.sourceStart
+        left.fadeOut = 0
+        right.id = UUID()
+        right.start = time
+        right.sourceStart = splitSrc
+        right.sourceLength = c.sourceStart + c.sourceLength - splitSrc
+        right.fadeIn = 0
+        guard left.sourceLength > 16, right.sourceLength > 16 else { return nil }
+        return (left, right)
+    }
+
+    /// Cuts a clip at several times, returning its pieces in order.
+    static func splitClip(_ c: Clip, at times: [Double]) -> [Clip] {
+        var pieces: [Clip] = []
+        var rest = c
+        for t in times.sorted() {
+            if let (l, r) = splitClip(rest, at: t) { pieces.append(l); rest = r }
+        }
+        pieces.append(rest)
+        return pieces
+    }
+
+    /// Splits each selected clip at the transients inside its own source region (one undo step).
     func sliceSelectedClipsAtTransients() {
-        var total = 0
+        var replacements: [UUID: [Clip]] = [:]
+        var cuts = 0
         for id in selectedClips {
             guard let clip = project.clip(id), let sample = project.sample(clip.sampleID) else { continue }
             let onsets = TransientDetector.detect(in: sample.buffer, range: clip.sourceStart..<(clip.sourceStart + clip.sourceLength),
                                                   sensitivity: editor.sensitivity)
             let times = onsets.map { clip.start + Double($0 - clip.sourceStart) / AudioSpec.sampleRate * clip.stretch }
-            var currentIDs: Set<UUID> = [id]
-            for t in times.sorted() {
-                split(at: t, clipIDs: currentIDs)
-                currentIDs = Set(project.tracks.flatMap(\.clips).filter { $0.sampleID == clip.sampleID && $0.start >= clip.start - 0.001 && $0.end <= clip.end + 0.001 }.map(\.id))
-                total += 1
+            let pieces = Self.splitClip(clip, at: times)
+            if pieces.count > 1 {
+                replacements[id] = pieces
+                cuts += pieces.count - 1
             }
         }
-        showToast(total == 0 ? "No transients found" : "Sliced at \(total) transients")
+        guard !replacements.isEmpty else { showToast("No transients found"); return }
+        perform("Slice at Transients") { p in
+            for t in p.tracks.indices {
+                p.tracks[t].clips = p.tracks[t].clips.flatMap { replacements[$0.id] ?? [$0] }
+            }
+        }
+        selectedClips = Set(replacements.values.flatMap { $0.map(\.id) })
+        showToast("Sliced at \(cuts) transients")
     }
 
     func renameClip(_ id: UUID, to name: String) {

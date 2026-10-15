@@ -357,6 +357,7 @@ private struct EditorEmptyState: View {
 /// Full-width live waveform while capturing a free take into the library.
 private struct LiveCaptureView: View {
     @EnvironmentObject var studio: Studio
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     var body: some View {
@@ -409,6 +410,6 @@ private struct LiveCaptureView: View {
             }
             .background(Theme.base)
         }
-        .onAppear { pulse = true }
+        .onAppear { pulse = !reduceMotion }
     }
 }

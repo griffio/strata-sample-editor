@@ -132,6 +132,7 @@ final class Studio: ObservableObject {
     var recordLoopTarget: Int64?
     var takeCounter = 1
     var recordWrapCount: Int64 = 0
+    var recordMappingSeq: Int64 = 0
     var recordWrapTicks = 0
 
     private var gestureBase: Project?
@@ -142,6 +143,11 @@ final class Studio: ObservableObject {
     private var toastWork: DispatchWorkItem?
     private var lastWrapCount: Int64 = 0
     private var tick = 0
+    private var appliedOutputUID: String?
+    private var timerIsFast = false
+    private var lastAudioActivity = Date()
+    private var windowVisible = true
+    private var occlusionObserver: NSObjectProtocol?
 
     var project: Project { document.project }
 
@@ -160,7 +166,6 @@ final class Studio: ObservableObject {
         }
         engine.onConfigurationChange = { [weak self] in self?.capture.monitorEngine = self?.engine }
         applySettings()
-        engine.start()
         capture.monitorEngine = engine
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
@@ -177,11 +182,13 @@ final class Studio: ObservableObject {
     deinit {
         timer?.invalidate()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        if let o = occlusionObserver { NotificationCenter.default.removeObserver(o) }
     }
 
     func shutdown() {
         timer?.invalidate()
         timer = nil
+        if let o = occlusionObserver { NotificationCenter.default.removeObserver(o); occlusionObserver = nil }
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
         if isRecording { capture.endRecording() }
         engine.setPlaying(false)
@@ -193,13 +200,29 @@ final class Studio: ObservableObject {
         capture.monitorEngine = engine
     }
 
-    // MARK: - Settings
-
-    private var appliedOutputUID: String? {
-        get { objc_getAssociatedObject(self, &Studio.outputKey) as? String }
-        set { objc_setAssociatedObject(self, &Studio.outputKey, newValue, .OBJC_ASSOCIATION_RETAIN) }
+    /// Called once the hosting window is known: tracks occlusion so a hidden window
+    /// stops redrawing meters and playheads.
+    func attach(window w: NSWindow) {
+        guard window !== w else { return }
+        window = w
+        if let o = occlusionObserver { NotificationCenter.default.removeObserver(o) }
+        windowVisible = w.occlusionState.contains(.visible)
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak self, weak w] _ in
+            guard let self = self, let w = w else { return }
+            self.windowVisible = w.occlusionState.contains(.visible)
+            self.retuneTimer()
+        }
     }
-    private static var outputKey = 0
+
+    /// Starts the output engine on demand (it is stopped again after a few idle seconds).
+    func ensureEngineRunning() {
+        lastAudioActivity = Date()
+        if !engine.isRunning { engine.start() }
+        retuneTimer()
+    }
+
+    // MARK: - Settings
 
     private func applySettings() {
         let d = UserDefaults.standard
@@ -209,7 +232,7 @@ final class Studio: ObservableObject {
         if uid != appliedOutputUID {
             appliedOutputUID = uid
             if uid.isEmpty {
-                if engine.isRunning { engine.setOutputDevice(nil) }
+                engine.setOutputDevice(nil)
             } else if let dev = AudioDevices.shared.outputs.first(where: { $0.uid == uid }) {
                 engine.setOutputDevice(dev.id)
             }
@@ -234,6 +257,7 @@ final class Studio: ObservableObject {
     // MARK: - Engine sync
 
     private func rebuildGraph(_ p: Project) {
+        stretchCache.beginPass()
         let graph = RenderGraph(project: p) { [weak self] clip in
             guard let self = self, let s = p.sample(clip.sampleID) else { return nil }
             // While dragging, preview stretches as varispeed; render once on release.
@@ -317,11 +341,12 @@ final class Studio: ObservableObject {
 
     func play() {
         guard !isPlaying else { return }
-        if !engine.isRunning { engine.start() }
+        ensureEngineRunning()
         if project.loop.enabled && positionSeconds >= project.loop.end { seek(to: project.loop.start) }
         engine.setPlaying(true)
         isPlaying = true
         lastWrapCount = engine.shared[7]
+        retuneTimer()
     }
 
     func stop() {
@@ -383,16 +408,43 @@ final class Studio: ObservableObject {
         }
     }
 
-    // MARK: - Timer (60 Hz UI refresh)
+    // MARK: - Timer (adaptive UI refresh)
+
+    /// Something is moving: playhead, preview, recording, live input or decaying meters.
+    private var needsFastRefresh: Bool {
+        if isRecording { return true }
+        guard windowVisible else { return false }
+        return isPlaying || engine.previewPosition != nil || capture.isCapturing || metersActive
+    }
+
+    private var metersActive: Bool {
+        meters.master.0 > 0 || meters.master.1 > 0 || meters.input.0 > 0 || meters.input.1 > 0
+            || meters.tracks.values.contains { $0.0 > 0 || $0.1 > 0 }
+    }
 
     private func startTimer() {
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.onTick() }
+        timerIsFast = !needsFastRefresh   // force a (re)schedule
+        retuneTimer()
+    }
+
+    /// 60 Hz while anything animates, 4 Hz when idle — keeps idle CPU wake-ups minimal.
+    func retuneTimer() {
+        let fast = needsFastRefresh
+        guard fast != timerIsFast || timer == nil else { return }
+        timerIsFast = fast
+        timer?.invalidate()
+        let interval = fast ? 1.0 / 60.0 : 0.25
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.onTick() }
+        t.tolerance = fast ? 0.002 : 0.1
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
 
     private func onTick() {
         tick += 1
+        defer { retuneTimer(); stopEngineIfIdle() }
+        if isRecording { pollRecording() }
+        guard windowVisible else { return }
         let pos = positionSeconds
         if isPlaying || abs(clock.position - pos) > 0.0005 {
             clock.position = pos
@@ -400,8 +452,19 @@ final class Studio: ObservableObject {
         }
         let pv = engine.previewPosition
         if pv != clock.previewFrame { clock.previewFrame = pv }
-        if isRecording { pollRecording() }
-        if tick % 2 == 0 { updateMeters() }
+        if tick % 2 == 0 || !timerIsFast { updateMeters() }
+    }
+
+    /// The output engine keeps the audio device awake; release it when nothing needs it.
+    private func stopEngineIfIdle() {
+        guard engine.isRunning else { return }
+        let monitoring = capture.monitoring && capture.monitorEngine === engine
+        if isPlaying || isRecording || engine.previewPosition != nil || monitoring {
+            lastAudioActivity = Date()
+        } else if Date().timeIntervalSince(lastAudioActivity) > 4 {
+            engine.stopEngine()
+            for i in 0..<(AudioSpec.maxTracks * 2 + 2) { _ = engine.meters.take(i) }
+        }
     }
 
     private func followIfNeeded(_ pos: Double) {
@@ -413,7 +476,11 @@ final class Studio: ObservableObject {
     }
 
     private func updateMeters() {
-        func decay(_ old: Float, _ new: Float) -> Float { max(new, old * 0.82) }
+        // Decay towards zero and snap tiny values so idle meters stop publishing.
+        func decay(_ old: Float, _ new: Float) -> Float {
+            let v = max(new, old * 0.82)
+            return v < 0.0005 ? 0 : v
+        }
         var tracks: [UUID: (Float, Float)] = [:]
         for (i, t) in project.tracks.prefix(AudioSpec.maxTracks).enumerated() {
             let l = engine.meters.take(i * 2), r = engine.meters.take(i * 2 + 1)

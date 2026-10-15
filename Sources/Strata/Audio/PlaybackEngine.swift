@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import CoreAudio
 import AudioToolbox
+import os
 
 /// One-shot audition of a sample region, independent of the transport.
 struct PreviewRequest {
@@ -50,12 +51,15 @@ final class PlaybackEngine {
     private let scratchR: UnsafeMutablePointer<Float>
     private static let scratchSize = 8192
 
-    /// 0 position, 1 playing, 2 seqlock, 3 host time, 4 frame at host time,
+    /// 0 position, 1 playing, 2 seqlock, 3 host time, 4 frame at host time, 8 playing at mapping time,
     /// 5 preview position (-1 idle), 6 count-in click-until frame, 7 loop wrap counter
-    let shared = AtomicInts(count: 8)
+    let shared = AtomicInts(count: 9)
 
     private(set) var outputLatency: Double = 0
     private(set) var isRunning = false
+    /// Whether the engine should be running (restarts after device changes only if so).
+    private var wantsRunning = false
+    private let log = Logger(subsystem: "com.griffio.strata", category: "playback")
     var onConfigurationChange: (() -> Void)?
     private var configObserver: NSObjectProtocol?
 
@@ -93,7 +97,8 @@ final class PlaybackEngine {
     // MARK: Lifecycle
 
     func start() {
-        guard !engine.isRunning else { return }
+        wantsRunning = true
+        guard !engine.isRunning else { isRunning = true; return }
         engine.prepare()
         do {
             try engine.start()
@@ -101,19 +106,22 @@ final class PlaybackEngine {
             outputLatency = engine.outputNode.presentationLatency
         } catch {
             isRunning = false
-            NSLog("Strata: output engine failed to start: \(error)")
+            log.error("Output engine failed to start: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     func stopEngine() {
+        wantsRunning = false
         engine.stop()
         isRunning = false
     }
 
+    /// Re-establishes the I/O after a hardware configuration change.
     func restart() {
+        let shouldRun = wantsRunning
         engine.stop()
         isRunning = false
-        start()
+        if shouldRun { start() }
     }
 
     /// Routes playback to a specific output device (nil = system default).
@@ -123,6 +131,7 @@ final class PlaybackEngine {
         guard device != 0 else { return }
         let wasRunning = engine.isRunning
         engine.stop()
+        isRunning = false
         AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                              &device, UInt32(MemoryLayout<AudioDeviceID>.size))
         if wasRunning { start() }
@@ -160,6 +169,7 @@ final class PlaybackEngine {
     }
 
     func setMonitor(_ ring: StereoRingBuffer?, gain: Float) {
+        if ring != nil && gain > 0 { start() }
         lock.withLock {
             monitorSource = ring
             monitorGain = gain
@@ -174,6 +184,14 @@ final class PlaybackEngine {
     var positionFrame: Int64 { shared[0] }
     var isPlaying: Bool { shared[1] != 0 }
     var previewPosition: Int? { let p = shared[5]; return p >= 0 ? Int(p) : nil }
+
+    /// Sequence number of the host-time mapping (advances every render callback).
+    var mappingSequence: Int64 { shared[2] }
+
+    /// True once a render callback has published a mapping while the transport was playing.
+    func hasPlayingMapping(after sequence: Int64) -> Bool {
+        shared[2] >= sequence + 4 && shared[8] == 1
+    }
 
     /// Maps a host time to the timeline frame that was audible at that instant.
     func timelineFrame(atHostTime host: UInt64) -> Int64 {
@@ -239,6 +257,7 @@ final class PlaybackEngine {
         shared[2] = seq + 1
         shared[3] = Int64(timestamp.pointee.mHostTime)
         shared[4] = position
+        shared[8] = playing ? 1 : 0
         shared[2] = seq + 2
 
         if playing {

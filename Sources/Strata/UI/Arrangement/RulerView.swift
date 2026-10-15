@@ -29,6 +29,14 @@ final class RulerNSView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .ruler }
+    override func accessibilityLabel() -> String? {
+        let p = project
+        let fmt = MusicalTimeFormatter(project: p)
+        return "Timeline ruler. Loop \(p.loop.enabled ? "on" : "off") from bar \(fmt.string(p.loop.start)) to \(fmt.string(p.loop.end))"
+    }
+
     private var vp: TimelineViewport { studio.viewport }
     private var project: Project { studio.project }
 

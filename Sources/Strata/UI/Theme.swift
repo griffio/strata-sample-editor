@@ -146,6 +146,15 @@ struct IconButton: View {
         .disabled(disabled)
         .onHover { hover = $0 }
         .help(help)
+        .accessibilityLabel(Self.spokenLabel(help, symbol: symbol))
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
+
+    /// Strips shortcut hints like “(⌘T)” from tooltips for VoiceOver.
+    static func spokenLabel(_ help: String, symbol: String) -> String {
+        guard !help.isEmpty else { return symbol.replacingOccurrences(of: ".", with: " ") }
+        if let i = help.firstIndex(of: "(") { return String(help[..<i]).trimmingCharacters(in: .whitespaces) }
+        return help
     }
 }
 
@@ -183,6 +192,8 @@ struct PillToggle: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .help(help)
+        .accessibilityLabel(help.isEmpty ? label : help)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 

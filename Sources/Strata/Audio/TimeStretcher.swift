@@ -24,15 +24,21 @@ final class StretchCache {
     private var ready: [Key: SampleBuffer] = [:]
     private var pending: Set<Key> = []
     private var lastUsed: [Key: Date] = [:]
+    /// Keys referenced by the most recent graph build; never evicted.
+    private var inUse: Set<Key> = []
     private let queue = DispatchQueue(label: "strata.stretch", qos: .userInitiated, attributes: .concurrent)
     private let semaphore = DispatchSemaphore(value: 2)
     /// Called on the main thread whenever a render finishes.
     var onReady: (() -> Void)?
 
+    /// Call before each graph build so eviction knows which renders are live.
+    func beginPass() { inUse.removeAll(keepingCapacity: true) }
+
     /// Main thread. Returns the cached render, scheduling one when missing.
     func lookup(_ clip: Clip, sample: Sample) -> SampleBuffer? {
         let key = Key(clip: clip, bufferID: sample.buffer.id)
         lastUsed[key] = Date()
+        inUse.insert(key)
         if let b = ready[key] { return b }
         guard !pending.contains(key) else { return nil }
         pending.insert(key)
@@ -60,16 +66,31 @@ final class StretchCache {
 
     /// Returns a finished render without scheduling one (used mid-gesture).
     func cached(_ clip: Clip, sample: Sample) -> SampleBuffer? {
-        ready[Key(clip: clip, bufferID: sample.buffer.id)]
+        let key = Key(clip: clip, bufferID: sample.buffer.id)
+        inUse.insert(key)
+        return ready[key]
+    }
+
+    /// Renders synchronously (any thread) for offline bounces.
+    static func renderNow(_ clip: Clip, sample: Sample) -> SampleBuffer? {
+        let range = clip.sourceStart..<(clip.sourceStart + clip.sourceLength)
+        return clip.stretchMode == .beats
+            ? WSOLAStretcher.render(buffer: sample.buffer, range: range, stretch: clip.stretch)
+            : TimeStretcher.render(buffer: sample.buffer, range: range, stretch: clip.stretch)
     }
 
     func isPending(_ clip: Clip, sample: Sample) -> Bool {
         pending.contains(Key(clip: clip, bufferID: sample.buffer.id))
     }
 
+    /// Drops least-recently-used renders that the arrangement no longer references.
     private func evict() {
-        guard ready.count > 48 else { return }
-        let victims = lastUsed.filter { ready[$0.key] != nil }.sorted { $0.value < $1.value }.prefix(ready.count - 48)
+        let limit = 48
+        guard ready.count > limit else { return }
+        let victims = lastUsed
+            .filter { ready[$0.key] != nil && !inUse.contains($0.key) }
+            .sorted { $0.value < $1.value }
+            .prefix(ready.count - limit)
         for v in victims { ready[v.key] = nil; lastUsed[v.key] = nil }
     }
 }
@@ -178,7 +199,9 @@ enum WSOLAStretcher {
 
         mono.withUnsafeBufferPointer { m in
             while k * hs < outLen + hs {
-                let nominal = Int((Double(k) * ha).rounded()) - frame / 2   // frame centre ↔ k·ha
+                // Frame centre ↔ k·ha, clamped so the ±tolerance search stays inside the padding.
+                let nominal = min(max(Int((Double(k) * ha).rounded()) - frame / 2, -pad + tolerance),
+                                  n + pad - frame - tolerance - 1)
                 var pos = nominal
                 if k > 0 {
                     // Natural continuation of the previous frame, compared over the overlap.

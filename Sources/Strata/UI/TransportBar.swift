@@ -55,11 +55,14 @@ private struct TransportButton: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .help(help)
+        .accessibilityLabel(IconButton.spokenLabel(help, symbol: symbol))
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
 
 private struct RecordButton: View {
     @EnvironmentObject var studio: Studio
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hover = false
     @State private var blink = false
 
@@ -80,8 +83,9 @@ private struct RecordButton: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .help(studio.armedTrack != nil ? "Record onto “\(studio.armedTrack!.name)” (R)" : "Capture to Library (R) — arm a track to record onto the timeline")
+        .accessibilityLabel(studio.isRecording ? "Stop recording" : "Record")
         .onChange(of: studio.isRecording) { rec in
-            if rec { withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { blink = true } }
+            if rec && !reduceMotion { withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { blink = true } }
             else { blink = false }
         }
     }
@@ -221,7 +225,8 @@ private struct MasterMeter: View {
             Knob(value: Binding(get: { MiniFader.position(fromGain: studio.project.masterVolume) },
                                 set: { v in studio.live { $0.masterVolume = MiniFader.gain(fromPosition: v) } }),
                  color: Color(hex: 0x3CE38A), size: 18, defaultValue: 0.8,
-                 onBegin: { studio.beginGesture("Master Volume") }, onEnd: { studio.endGesture() })
+                 onBegin: { studio.beginGesture("Master Volume") }, onEnd: { studio.endGesture() },
+                 accessibilityName: "Master volume", accessibilityText: dbString(studio.project.masterVolume))
                 .help("Master: \(dbString(studio.project.masterVolume))")
         }
         .padding(.horizontal, 8)

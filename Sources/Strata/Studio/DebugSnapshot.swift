@@ -6,6 +6,7 @@ import CoreGraphics
 /// Optional: STRATA_DEMO=1 loads the demo kit first.
 enum DebugSnapshot {
     static func runIfRequested(studio: Studio) {
+        #if DEBUG
         let env = ProcessInfo.processInfo.environment
         guard let prefix = env["STRATA_SNAPSHOT"] else { return }
         let steps = (env["STRATA_STEPS"] ?? "base").split(separator: ",").map(String.init)
@@ -17,7 +18,10 @@ enum DebugSnapshot {
             }
             run(steps: steps, index: 0, studio: studio, prefix: prefix)
         }
+        #endif
     }
+
+    #if DEBUG
 
     private static func run(steps: [String], index: Int, studio: Studio, prefix: String) {
         guard index < steps.count else {
@@ -81,4 +85,5 @@ enum DebugSnapshot {
         let rep = NSBitmapImageRep(cgImage: image)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
+    #endif
 }

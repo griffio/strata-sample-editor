@@ -38,7 +38,7 @@ struct StudioRootView: View {
         .environmentObject(studio)
         .focusedSceneObject(studio)
         .background(WindowAccessor { window in
-            studio.window = window
+            studio.attach(window: window)
             window.titlebarSeparatorStyle = .none
             window.backgroundColor = NSColor(hex: 0x0D0E11)
             studio.installKeyMonitor()

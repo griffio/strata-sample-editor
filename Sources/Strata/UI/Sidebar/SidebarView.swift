@@ -135,6 +135,9 @@ private struct SourceRow<Accessory: View>: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { action() }
     }
 
     private var statusText: String? {
@@ -219,7 +222,8 @@ private struct LiveSourceMonitor: View {
                 Spacer()
                 Knob(value: Binding(get: { MiniFader.position(fromGain: capture.inputGain) },
                                     set: { capture.inputGain = MiniFader.gain(fromPosition: $0) }),
-                     color: Theme.accent, size: 18, defaultValue: 0.8)
+                     color: Theme.accent, size: 18, defaultValue: 0.8,
+                     accessibilityName: "Input gain", accessibilityText: dbString(capture.inputGain))
                     .help("Input gain: \(dbString(capture.inputGain))")
                 IconButton(symbol: capture.monitoring ? "headphones.circle.fill" : "headphones", help: "Monitor input through the output",
                            active: capture.monitoring, size: 12, width: 26, height: 22) { capture.monitoring.toggle() }
@@ -452,6 +456,11 @@ private struct LibraryRow: View {
         .contentShape(Rectangle())
         .onTapGesture { studio.openInEditor(sampleID: sample.id) }
         .onHover { hover = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(sample.name), \(formatDuration(sample.duration))")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { studio.openInEditor(sampleID: sample.id) }
+        .accessibilityAction(named: "Preview") { studio.previewSample(sample.id) }
         .onDrag {
             let provider = NSItemProvider(object: DragPayload.sample(sample.id) as NSString)
             provider.suggestedName = sample.name

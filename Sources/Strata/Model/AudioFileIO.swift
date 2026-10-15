@@ -136,11 +136,9 @@ enum AudioFileIO {
     static func encode(_ buffer: SampleBuffer) throws -> Data {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".caf")
         defer { try? FileManager.default.removeItem(at: tmp) }
-        do {
-            try write(buffer, to: tmp, kind: .cafLossless)
-        } catch {
-            try write(buffer, to: tmp, kind: .cafFloat)
-        }
+        // 32-bit float CAF: bit-exact, and preserves headroom above 0 dBFS
+        // (integer codecs such as ALAC would clip boosted samples).
+        try write(buffer, to: tmp, kind: .cafFloat)
         return try Data(contentsOf: tmp)
     }
 

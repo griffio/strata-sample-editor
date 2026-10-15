@@ -142,11 +142,8 @@ extension Studio {
         panel.message = p.loop.enabled ? "Bounce the loop region (\(formatDuration(end - start)))" : "Bounce the whole arrangement (\(formatDuration(end - start)))"
         panel.beginSheetModal(for: w) { resp in
             guard resp == .OK, let url = panel.url else { return }
-            let graph = RenderGraph(project: p) { clip in
-                guard let s = p.sample(clip.sampleID) else { return nil }
-                return self.stretchCache.lookup(clip, sample: s)
-            }
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.showToast("Bouncing…")
+            self.offlineGraph(for: p) { graph in
                 let buffer = PlaybackEngine.bounce(graph: graph, from: start, to: end)
                 do {
                     try AudioFileIO.write(buffer, to: url, kind: url.pathExtension.lowercased().hasPrefix("aif") ? .aiff : .wav)
@@ -164,25 +161,45 @@ extension Studio {
         let start = p.loop.enabled ? p.loop.start : 0
         let end = p.loop.enabled ? p.loop.end : p.contentEnd
         guard end > start else { return }
-        let graph = RenderGraph(project: p) { clip in
-            guard let s = p.sample(clip.sampleID) else { return nil }
-            return self.stretchCache.lookup(clip, sample: s)
+        offlineGraph(for: p) { graph in
+            let buffer = PlaybackEngine.bounce(graph: graph, from: start, to: end)
+            buffer.preparePeaks()
+            DispatchQueue.main.async {
+                self.addSample(buffer, name: "Bounce", origin: "Bounced from arrangement")
+                self.showToast("Bounced \(formatDuration(end - start)) to Library")
+            }
         }
-        let buffer = PlaybackEngine.bounce(graph: graph, from: start, to: end)
-        addSample(buffer, name: "Bounce", origin: "Bounced from arrangement")
-        showToast("Bounced \(formatDuration(end - start)) to Library")
+    }
+
+    /// Builds a render graph for offline use on a background queue. Pitch-preserving
+    /// stretches that aren't cached yet are rendered synchronously, so a bounce never
+    /// falls back to varispeed.
+    func offlineGraph(for p: Project, _ body: @escaping (RenderGraph) -> Void) {
+        var cached: [UUID: SampleBuffer] = [:]
+        for clip in p.tracks.flatMap(\.clips) where clip.isStretched && clip.preservePitch {
+            if let s = p.sample(clip.sampleID), let b = stretchCache.cached(clip, sample: s) { cached[clip.id] = b }
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let graph = RenderGraph(project: p) { clip in
+                if let b = cached[clip.id] { return b }
+                guard let s = p.sample(clip.sampleID) else { return nil }
+                return StretchCache.renderNow(clip, sample: s)
+            }
+            body(graph)
+        }
     }
 
     // MARK: - Destructive sample edits (each is one undo step)
 
-    private func applyEdit(_ name: String, keepsLength: Bool, _ transform: (Sample) -> (SampleBuffer, [Int])?) {
+    /// - Parameter removed: source ranges deleted by the edit (nil when the length is unchanged).
+    private func applyEdit(_ name: String, removed: [Range<Int>]? = nil, _ transform: (Sample) -> (SampleBuffer, [Int])?) {
         guard let id = editor.sampleID, let s = project.sample(id), let (buffer, slices) = transform(s) else { return }
         DispatchQueue.global(qos: .userInitiated).async { buffer.preparePeaks() }
         perform(name) { p in
             guard let i = p.sampleIndex(id) else { return }
             p.samples[i].buffer = buffer
             p.samples[i].slices = slices.filter { $0 > 0 && $0 < buffer.frameCount }.sorted()
-            if !keepsLength { p.reconcileClips(forSample: id) }
+            if let removed = removed { p.remapClips(forSample: id, removed: removed) }
         }
     }
 
@@ -193,7 +210,8 @@ extension Studio {
 
     func editTrimToSelection() {
         guard let r = editRange else { return }
-        applyEdit("Trim", keepsLength: false) { s in
+        let total = editorSample?.frameCount ?? 0
+        applyEdit("Trim", removed: [0..<r.lowerBound, r.upperBound..<total]) { s in
             (s.buffer.copy(range: r), s.slices.filter { r.contains($0) }.map { $0 - r.lowerBound })
         }
         editor.selection = nil
@@ -202,20 +220,20 @@ extension Studio {
 
     func editDeleteSelection() {
         guard let r = editRange else { return }
-        applyEdit("Delete Audio", keepsLength: false) { s in
+        applyEdit("Delete Audio", removed: [r]) { s in
             (s.buffer.deleting(range: r),
              s.slices.filter { !r.contains($0) }.map { $0 >= r.upperBound ? $0 - r.count : $0 })
         }
         editor.selection = r.lowerBound..<r.lowerBound
     }
 
-    func editSilence() { applyEdit("Silence", keepsLength: true) { ($0.buffer.silenced(range: editRange), $0.slices) } }
-    func editReverse() { applyEdit("Reverse", keepsLength: true) { ($0.buffer.reversed(range: editRange), $0.slices) } }
-    func editNormalize() { applyEdit("Normalize", keepsLength: true) { ($0.buffer.normalized(range: editRange), $0.slices) } }
-    func editFadeIn() { applyEdit("Fade In", keepsLength: true) { ($0.buffer.faded(in: true, range: editRange), $0.slices) } }
-    func editFadeOut() { applyEdit("Fade Out", keepsLength: true) { ($0.buffer.faded(in: false, range: editRange), $0.slices) } }
+    func editSilence() { applyEdit("Silence") { ($0.buffer.silenced(range: editRange), $0.slices) } }
+    func editReverse() { applyEdit("Reverse") { ($0.buffer.reversed(range: editRange), $0.slices) } }
+    func editNormalize() { applyEdit("Normalize") { ($0.buffer.normalized(range: editRange), $0.slices) } }
+    func editFadeIn() { applyEdit("Fade In") { ($0.buffer.faded(in: true, range: editRange), $0.slices) } }
+    func editFadeOut() { applyEdit("Fade Out") { ($0.buffer.faded(in: false, range: editRange), $0.slices) } }
     func editGain(_ db: Float) {
-        applyEdit(String(format: "Gain %+.0f dB", db), keepsLength: true) { ($0.buffer.gained(powf(10, db / 20), range: editRange), $0.slices) }
+        applyEdit(String(format: "Gain %+.0f dB", db)) { ($0.buffer.gained(powf(10, db / 20), range: editRange), $0.slices) }
     }
 
     func editSelectionToNewSample() {
@@ -331,7 +349,9 @@ extension Studio {
         guard let s = project.sample(id) else { return }
         let r = (range ?? 0..<s.frameCount).clamped(to: 0..<s.frameCount)
         guard r.count > 0 else { return }
+        ensureEngineRunning()
         engine.preview(PreviewRequest(buffer: s.buffer, range: r, loop: loop))
+        retuneTimer()
     }
 
     func previewEditorSelection() {

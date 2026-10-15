@@ -139,6 +139,35 @@ struct Project: Equatable {
         !track.mute && (!anySolo || track.solo)
     }
 
+    /// Re-targets clips after frames were removed from a sample, so every clip keeps
+    /// playing the same audio (and stays where it was on the timeline).
+    mutating func remapClips(forSample id: UUID, removed: [Range<Int>]) {
+        let cuts = removed.filter { !$0.isEmpty }.sorted { $0.lowerBound < $1.lowerBound }
+        guard !cuts.isEmpty else { return }
+        func removedBefore(_ x: Int) -> Int {
+            cuts.reduce(0) { $0 + max(0, min(x, $1.upperBound) - $1.lowerBound) }
+        }
+        func map(_ x: Int) -> Int { x - removedBefore(x) }
+        for t in tracks.indices {
+            var kept: [Clip] = []
+            for var c in tracks[t].clips {
+                guard c.sampleID == id else { kept.append(c); continue }
+                let oldStart = c.sourceStart, oldEnd = c.sourceStart + c.sourceLength
+                // Frames lost at the head of the clip move its start later on the timeline.
+                var head = oldStart
+                while let cut = cuts.first(where: { $0.contains(head) }) { head = cut.upperBound }
+                let a = map(head), b = map(oldEnd)
+                guard b - a > 16 else { continue }   // the clip's audio is gone
+                c.start += Double(head - oldStart) / AudioSpec.sampleRate * c.stretch
+                c.sourceStart = a
+                c.sourceLength = b - a
+                kept.append(c)
+            }
+            tracks[t].clips = kept
+        }
+        reconcileClips(forSample: id)
+    }
+
     /// Keeps clip references valid after a sample's length changed.
     mutating func reconcileClips(forSample id: UUID) {
         guard let s = sample(id) else {

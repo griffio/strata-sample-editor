@@ -58,6 +58,18 @@ final class WaveformEditorNSView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .image }
+    override func accessibilityRoleDescription() -> String? { "waveform editor" }
+    override func accessibilityLabel() -> String? {
+        guard let s = sample else { return "Waveform editor, empty" }
+        var text = "\(s.name), \(formatDuration(s.duration)), \(s.sliceRanges.count) slices"
+        if let sel = ed.selection, sel.count > 0 {
+            text += ", selection \(formatDuration(Double(sel.count) / AudioSpec.sampleRate)) starting at \(formatClock(Double(sel.lowerBound) / AudioSpec.sampleRate))"
+        }
+        return text
+    }
+
     private var ed: EditorState { studio.editor }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -526,6 +538,7 @@ final class OverviewNSView: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func isAccessibilityElement() -> Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext, let s = sample, s.frameCount > 0 else { return }

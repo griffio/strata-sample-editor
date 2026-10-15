@@ -34,6 +34,8 @@ extension Studio {
                                 message: "Choose an input device or System Audio in the Sources panel, then press Record again.")
             return
         }
+        if armedTrack != nil { ensureEngineRunning() }
+        recordMappingSeq = engine.mappingSequence
         let rec = capture.beginRecording()
         recorder = rec
         recordFirstFrame = nil
@@ -85,7 +87,10 @@ extension Studio {
         guard let rec = recorder else { return }
         let sr = AudioSpec.sampleRate
         if recordingTrackID != nil {
-            if recordFirstFrame == nil, let host = rec.hostTimeOfFirstFrame {
+            // Wait for a render that reflects the started transport, otherwise the
+            // host-time ↔ timeline mapping is stale (e.g. right after an idle restart).
+            if recordFirstFrame == nil, let host = rec.hostTimeOfFirstFrame,
+               engine.hasPlayingMapping(after: recordMappingSeq) {
                 let latencyTicks = HostClock.ticks(capture.inputLatency)
                 recordFirstFrame = engine.timelineFrame(atHostTime: host &- latencyTicks)
             }

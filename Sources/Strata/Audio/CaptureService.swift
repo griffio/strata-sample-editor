@@ -285,12 +285,15 @@ final class CaptureService: ObservableObject {
             inputEngine = engine
             inputLatency = input.presentationLatency
             // Device unplugged, sample rate changed, etc. → reconnect cleanly.
+            let gen = generation
             inputObserver = NotificationCenter.default.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-                guard let self = self, case .device(let current) = self.source, current == uid else { return }
+                guard let self = self, self.generation == gen, case .device(let current) = self.source, current == uid else { return }
                 self.stopCurrent()
                 self.status = .starting
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    // The user may have picked another source meanwhile.
+                    guard self.generation == gen, self.source == .device(uid: uid) else { return }
                     if AudioDevices.shared.device(uid: uid) != nil { self.startDevice(uid: uid) }
                     else { self.status = .failed("“\(device.name)” was disconnected.") }
                 }
@@ -492,6 +495,7 @@ final class CaptureService: ObservableObject {
         }
     }
 
+    #if DEBUG
     // MARK: Test signal (developer aid)
 
     private var testThread: Thread?
@@ -533,6 +537,7 @@ final class CaptureService: ObservableObject {
         t.start()
         testThread = t
     }
+    #endif
 
     // MARK: Recording & monitoring
 

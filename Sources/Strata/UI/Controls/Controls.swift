@@ -45,6 +45,9 @@ struct LevelMeter: View {
                 }
             }
         }
+        .accessibilityElement()
+        .accessibilityLabel("Level")
+        .accessibilityValue("Left \(dbString(left)), right \(dbString(right))")
     }
 }
 
@@ -59,10 +62,18 @@ struct Knob: View {
     var defaultValue: Double = 0
     var onBegin: () -> Void = {}
     var onEnd: () -> Void = {}
+    var accessibilityName = "Knob"
+    var accessibilityText: String? = nil
     @State private var dragStart: Double?
     @State private var hover = false
 
     private var unit: Double { bipolar ? (value + 1) / 2 : value }
+
+    private func nudge(_ delta: Double) {
+        onBegin()
+        value = min(1, max(bipolar ? -1 : 0, value + delta))
+        onEnd()
+    }
 
     var body: some View {
         ZStack {
@@ -112,6 +123,16 @@ struct Knob: View {
                     dragStart = nil
                 }
         )
+        .accessibilityElement()
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(accessibilityText ?? "\(Int((unit * 100).rounded())) percent")
+        .accessibilityAdjustableAction { dir in
+            switch dir {
+            case .increment: nudge(bipolar ? 0.1 : 0.05)
+            case .decrement: nudge(bipolar ? -0.1 : -0.05)
+            @unknown default: break
+            }
+        }
     }
 
     private var arc: some Shape {
@@ -137,10 +158,27 @@ struct MiniFader: View {
     var onBegin: () -> Void = {}
     var onEnd: () -> Void = {}
     var defaultValue: Double = 0.8
+    var accessibilityName = "Volume"
     @State private var dragging = false
     @State private var hover = false
 
     var body: some View {
+        faderBody
+            .accessibilityElement()
+            .accessibilityLabel(accessibilityName)
+            .accessibilityValue(dbString(Self.gain(fromPosition: value)))
+            .accessibilityAdjustableAction { dir in
+                onBegin()
+                switch dir {
+                case .increment: value = min(1, value + 0.025)
+                case .decrement: value = max(0, value - 0.025)
+                @unknown default: break
+                }
+                onEnd()
+            }
+    }
+
+    private var faderBody: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let x = CGFloat(value) * (w - 10) + 5
@@ -243,6 +281,14 @@ struct ScrubField: View {
                         text = format(value).filter { "0123456789.-".contains($0) }
                         editing = true
                     })
+                    .accessibilityElement()
+                    .accessibilityValue(format(value))
+                    .accessibilityAdjustableAction { dir in
+                        onBegin()
+                        let v = value + (dir == .increment ? step : -step)
+                        onChange(min(range.upperBound, max(range.lowerBound, v)))
+                        onEnd()
+                    }
             }
         }
     }
@@ -291,5 +337,6 @@ struct WaveformThumbnail: View {
             ctx.fill(top, with: .color(color.opacity(0.55)))
             ctx.fill(rms, with: .color(color))
         }
+        .accessibilityHidden(true)
     }
 }

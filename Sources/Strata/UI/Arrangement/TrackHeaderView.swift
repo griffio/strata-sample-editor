@@ -51,12 +51,14 @@ struct TrackHeaderView: View {
                         Knob(value: Binding(get: { Double(track.pan) },
                                             set: { v in studio.live { p in if let i = p.trackIndex(track.id) { p.tracks[i].pan = Float(v) } } }),
                              bipolar: true, color: color, size: 22, defaultValue: 0,
-                             onBegin: { studio.beginGesture("Pan") }, onEnd: { studio.endGesture() })
+                             onBegin: { studio.beginGesture("Pan") }, onEnd: { studio.endGesture() },
+                             accessibilityName: "\(track.name) pan", accessibilityText: panLabel)
                             .help(panLabel)
                         VStack(alignment: .leading, spacing: 1) {
                             MiniFader(value: Binding(get: { MiniFader.position(fromGain: track.volume) },
                                                      set: { v in studio.live { p in if let i = p.trackIndex(track.id) { p.tracks[i].volume = MiniFader.gain(fromPosition: v) } } }),
-                                      color: color, onBegin: { studio.beginGesture("Volume") }, onEnd: { studio.endGesture() })
+                                      color: color, onBegin: { studio.beginGesture("Volume") }, onEnd: { studio.endGesture() },
+                                      accessibilityName: "\(track.name) volume")
                             HStack {
                                 Text(dbString(track.volume))
                                 Spacer()
