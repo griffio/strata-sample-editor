@@ -28,8 +28,25 @@ swift test                    # unit tests: stretch timing, slicing, clip remapp
 scripts/screenshots.sh        # regenerate docs/screenshots (debug build captures its own window)
 ```
 
-> Ad-hoc signed builds get a new code signature each time, so macOS may ask again for
-> Microphone / Screen & System Audio Recording permission after a rebuild.
+### Permissions
+
+- **Microphone** is requested the first time you select an input device.
+- **Screen & System Audio Recording** is requested only when you select *System Audio*.
+  After turning Strata on in System Settings › Privacy & Security, relaunch Strata
+  (the sidebar offers a *Relaunch Strata* button). macOS only applies the grant to new processes.
+
+macOS ties these grants to the app's code signature. The default ad-hoc signature changes
+on every build, so a rebuilt app is treated as new and asks again. To keep grants across
+rebuilds, sign with a stable identity:
+
+```sh
+security find-identity -v -p codesigning          # list available identities
+STRATA_SIGN_IDENTITY="Apple Development: you@example.com" scripts/build-app.sh
+```
+
+A free Apple ID added in Xcode ▸ Settings ▸ Accounts provides an *Apple Development*
+certificate. A self-signed code-signing certificate from Keychain Access ▸ Certificate
+Assistant also works for local use.
 
 ## Screenshots
 

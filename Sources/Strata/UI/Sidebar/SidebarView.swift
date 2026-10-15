@@ -173,8 +173,13 @@ private struct LiveSourceMonitor: View {
                         .foregroundColor(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if case .permissionDenied = capture.status {
-                        Button("Open Privacy Settings") { openPrivacySettings() }
-                            .controlSize(.small)
+                        HStack(spacing: 6) {
+                            Button("Open Privacy Settings") { openPrivacySettings() }
+                            if case .system = capture.source {
+                                Button("Relaunch Strata") { relaunch() }
+                            }
+                        }
+                        .controlSize(.small)
                     }
                 }
                 .padding(9)
@@ -256,6 +261,16 @@ private struct LiveSourceMonitor: View {
 
     private var channelLabel: String {
         capture.stereo ? "In \(capture.firstChannel + 1)–\(capture.firstChannel + 2)" : "In \(capture.firstChannel + 1)"
+    }
+
+    /// Screen-recording grants only take effect in a new process.
+    private func relaunch() {
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
     }
 
     private func openPrivacySettings() {

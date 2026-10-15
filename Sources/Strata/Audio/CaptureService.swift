@@ -3,6 +3,7 @@ import AVFoundation
 import AudioToolbox
 import Combine
 import ScreenCaptureKit
+import CoreGraphics
 
 enum CaptureSource: Hashable {
     case none
@@ -202,12 +203,28 @@ final class CaptureService: ObservableObject {
                 }
             }
         case .system(let bundleID):
+            // Check silently first: touching ScreenCaptureKit without permission makes
+            // macOS show its dialog every time. Ask once; the grant needs a relaunch.
+            guard Self.hasScreenCaptureAccess else {
+                if !requestedScreenAccess {
+                    requestedScreenAccess = true
+                    CGRequestScreenCaptureAccess()
+                }
+                status = .permissionDenied("System Audio needs Screen & System Audio Recording permission. Turn on Strata in System Settings, then relaunch Strata.")
+                return
+            }
             status = .starting
             startSystem(bundleID: bundleID, generation: gen)
         }
     }
 
+    /// Non-prompting check (CoreGraphics preflight); true only after a grant and relaunch.
+    static var hasScreenCaptureAccess: Bool { CGPreflightScreenCaptureAccess() }
+    private var requestedScreenAccess = false
+
+    /// Lists apps for single-app capture. No-op without permission so it never prompts.
     func refreshShareableApps() {
+        guard Self.hasScreenCaptureAccess else { return }
         Task {
             let apps = await SystemAudioCapturer.availableApps()
             await MainActor.run { self.shareableApps = apps }
@@ -336,7 +353,7 @@ final class CaptureService: ObservableObject {
                     guard self.generation == gen else { return }
                     let ns = error as NSError
                     if ns.domain == SCStreamErrorDomain || ns.code == -3801 {
-                        self.status = .permissionDenied("Allow Strata under System Settings › Privacy & Security › Screen & System Audio Recording, then reselect System Audio.")
+                        self.status = .permissionDenied("System Audio needs Screen & System Audio Recording permission. Turn on Strata in System Settings, then relaunch Strata.")
                     } else {
                         self.status = .failed(error.localizedDescription)
                     }
