@@ -29,6 +29,8 @@ final class PlaybackEngine {
     private var pendingSeek: Int64?
     private var pendingPlaying: Bool?
     private var pendingPreview: PreviewRequest??
+    /// Live retarget of the playing preview (plain data: no ARC on the audio thread).
+    private var pendingPreviewRegion: (start: Int, end: Int, loop: Bool, buffer: UnsafeMutablePointer<Float>)?
     private var retiredPreview: SampleBuffer?
     private var monitorSource: StereoRingBuffer?
     private var monitorGain: Float = 0
@@ -168,6 +170,15 @@ final class PlaybackEngine {
         if request == nil { shared[5] = -1 } else { shared[5] = Int64(request!.range.lowerBound) }
     }
 
+    /// Changes the region of the preview that is playing now, keeping the playhead where it
+    /// is (wrapping to the new start if it falls outside). Ignored if `buffer` isn't playing.
+    func updatePreviewRegion(_ range: Range<Int>, loop: Bool, buffer: SampleBuffer) {
+        guard range.count > 0 else { return }
+        lock.withLock {
+            pendingPreviewRegion = (range.lowerBound, range.upperBound, loop, buffer.left)
+        }
+    }
+
     func setMonitor(_ ring: StereoRingBuffer?, gain: Float) {
         if ring != nil && gain > 0 { start() }
         lock.withLock {
@@ -246,6 +257,15 @@ final class PlaybackEngine {
                     previewR = nil
                 }
                 pendingPreview = nil
+            }
+            if let region = pendingPreviewRegion {
+                if previewL == region.buffer {
+                    previewStart = region.start
+                    previewEnd = region.end
+                    previewLoop = region.loop
+                    if previewPos < previewStart || previewPos >= previewEnd { previewPos = previewStart }
+                }
+                pendingPreviewRegion = nil
             }
             rtMonitor = monitorSource
             rtMonitorGain = monitorGain

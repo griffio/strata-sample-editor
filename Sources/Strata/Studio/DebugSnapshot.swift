@@ -68,6 +68,23 @@ enum DebugSnapshot {
         case "grab": studio.grab(seconds: 2)
         case "arm": if let t = studio.project.tracks.first { studio.toggleArm(t.id) }
         case "wait": break
+        case "loopprev":
+            if let s = studio.editorSample, s.sliceRanges.count > 6 {
+                studio.editor.selection = s.sliceRanges[1]
+                studio.editor.loopPreview = true
+                studio.previewEditorSelection()
+                NSLog("%@", "[snapshot] looping \(s.sliceRanges[1])")
+            }
+        case "reselect":
+            if let s = studio.editorSample, s.sliceRanges.count > 6 {
+                studio.editor.selection = s.sliceRanges[5]
+                NSLog("%@", "[snapshot] reselected \(s.sliceRanges[5])")
+                for delay in [0.1, 0.4, 0.8] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        NSLog("%@", "[snapshot] +\(delay)s preview pos=\(studio.engine.previewPosition.map(String.init) ?? "stopped")")
+                    }
+                }
+            }
         case "undostate":
             let um = studio.undoManager
             NSLog("%@", "[snapshot] canUndo=\(um?.canUndo ?? false) action=\(um?.undoActionName ?? "-") docEdited=\(NSDocumentController.shared.documents.first?.isDocumentEdited ?? false) docs=\(NSDocumentController.shared.documents.count) windowEdited=\(studio.window?.isDocumentEdited ?? false) changeCountUntitled=\(NSDocumentController.shared.documents.first?.fileURL == nil) autosave=\(NSDocumentController.shared.documents.first?.autosavedContentsFileURL?.lastPathComponent ?? "-")")

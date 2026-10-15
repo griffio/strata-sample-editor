@@ -357,7 +357,7 @@ final class WaveformEditorNSView: NSView {
             }
             if let r = s.sliceRanges.first(where: { $0.contains(frame) }) {
                 ed.selection = r
-                studio.previewSample(s.id, range: r)
+                studio.previewSample(s.id, range: r, loop: ed.loopPreview, fromEditor: true)
             }
             return
         }
@@ -380,7 +380,11 @@ final class WaveformEditorNSView: NSView {
         let anchor = snapped(frame, event)
         ed.selection = anchor..<anchor
         drag = .select(anchor: anchor)
-        if studio.clock.previewFrame != nil { studio.previewSample(s.id, range: anchor..<s.frameCount) }
+        // One-shot previews restart from the click; a looping preview keeps playing and
+        // follows the new selection once it is dragged out.
+        if studio.clock.previewFrame != nil && !studio.isLoopPreviewing {
+            studio.previewSample(s.id, range: anchor..<s.frameCount, fromEditor: true)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -421,7 +425,9 @@ final class WaveformEditorNSView: NSView {
         }
         if case .select = drag, let sel = ed.selection, sel.count == 0, let s = sample, !didDrag {
             // A click: place the cursor; if previewing, restart from here.
-            if studio.clock.previewFrame != nil { studio.previewSample(s.id, range: sel.lowerBound..<s.frameCount) }
+            if studio.clock.previewFrame != nil && !studio.isLoopPreviewing {
+                studio.previewSample(s.id, range: sel.lowerBound..<s.frameCount, fromEditor: true)
+            }
         }
         drag = .none
     }

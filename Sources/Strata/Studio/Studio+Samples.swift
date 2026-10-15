@@ -345,10 +345,11 @@ extension Studio {
 
     // MARK: - Preview
 
-    func previewSample(_ id: UUID, range: Range<Int>? = nil, loop: Bool = false) {
+    func previewSample(_ id: UUID, range: Range<Int>? = nil, loop: Bool = false, fromEditor: Bool = false) {
         guard let s = project.sample(id) else { return }
         let r = (range ?? 0..<s.frameCount).clamped(to: 0..<s.frameCount)
         guard r.count > 0 else { return }
+        previewContext = (id, fromEditor)
         ensureEngineRunning()
         engine.preview(PreviewRequest(buffer: s.buffer, range: r, loop: loop))
         retuneTimer()
@@ -358,10 +359,27 @@ extension Studio {
         guard let s = editorSample else { return }
         if clock.previewFrame != nil { stopPreview(); return }
         let r = editRange ?? (editor.selection.map { $0.lowerBound..<s.frameCount } ?? 0..<s.frameCount)
-        previewSample(s.id, range: r, loop: editor.loopPreview && editRange != nil)
+        previewSample(s.id, range: r, loop: editor.loopPreview && editRange != nil, fromEditor: true)
     }
 
-    func stopPreview() { engine.preview(nil) }
+    func stopPreview() {
+        previewContext = nil
+        engine.preview(nil)
+    }
+
+    /// True while an editor preview is looping — selection changes then retarget it.
+    var isLoopPreviewing: Bool {
+        engine.previewPosition != nil && editor.loopPreview && previewContext?.fromEditor == true
+    }
+
+    /// Retargets a running editor preview to the new selection without restarting it.
+    func syncLivePreview(selection: Range<Int>?, loop: Bool) {
+        guard engine.previewPosition != nil, let ctx = previewContext, ctx.fromEditor,
+              let s = editorSample, s.id == ctx.sampleID else { return }
+        // Ignore cursor clicks and the first pixels of a drag; keep the current region.
+        guard let r = selection?.clamped(to: 0..<s.frameCount), r.count >= 256 else { return }
+        engine.updatePreviewRegion(r, loop: loop, buffer: s.buffer)
+    }
 
     func editorZoomToFit() {
         guard let s = editorSample else { return }

@@ -119,6 +119,8 @@ final class Studio: ObservableObject {
     @Published var showEditor = true
     @Published var librarySelection: UUID?
     @Published var showShortcuts = false
+    /// What the running preview is playing; editor previews follow the selection live.
+    var previewContext: (sampleID: UUID, fromEditor: Bool)?
 
     // Recording
     @Published var isRecording = false
@@ -158,6 +160,9 @@ final class Studio: ObservableObject {
             .store(in: &cancellables)
         document.$project
             .sink { [weak self] p in self?.rebuildGraph(p) }
+            .store(in: &cancellables)
+        editor.$selection.combineLatest(editor.$loopPreview)
+            .sink { [weak self] selection, loop in self?.syncLivePreview(selection: selection, loop: loop) }
             .store(in: &cancellables)
         stretchCache.onReady = { [weak self] in
             guard let self = self else { return }
