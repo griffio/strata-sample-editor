@@ -340,6 +340,7 @@ final class TrackLaneNSView: NSView {
         // Title + badges
         if r.width > 24 {
             var x = r.minX + 6
+            var badgeWidth: CGFloat = 0
             let textColor = NSColor.black.withAlphaComponent(0.82)
             if clip.isStretched {
                 let pending = clip.preservePitch && studio.stretchCache.isPending(clip, sample: sample)
@@ -347,6 +348,7 @@ final class TrackLaneNSView: NSView {
                 let s = NSAttributedString.label(badge, size: 9, weight: .heavy, color: textColor, mono: true)
                 let w = s.size().width + 8
                 if r.width > w + 40 {
+                    badgeWidth = w + 8
                     let br = NSRect(x: r.maxX - w - 4, y: r.minY + 2, width: w, height: headerH - 4)
                     NSColor.black.withAlphaComponent(0.16).setFill()
                     NSBezierPath(roundedRect: br, xRadius: 3, yRadius: 3).fill()
@@ -359,7 +361,7 @@ final class TrackLaneNSView: NSView {
             }
             let title = NSAttributedString.label(clip.name, size: 10.5, weight: .semibold, color: textColor)
             ctx.saveGState()
-            ctx.clip(to: NSRect(x: x, y: r.minY, width: max(0, r.width - (x - r.minX) - 50), height: headerH))
+            ctx.clip(to: NSRect(x: x, y: r.minY, width: max(0, r.width - (x - r.minX) - 4 - badgeWidth), height: headerH))
             title.draw(at: NSPoint(x: x, y: r.minY + 0.5))
             ctx.restoreGState()
         }
