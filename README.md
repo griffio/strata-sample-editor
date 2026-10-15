@@ -1,10 +1,14 @@
+<p align="center">
+  <img src="docs/screenshots/icon.png" width="128" alt="Strata icon">
+</p>
+
 # Strata
 
 A native macOS sample & loop studio. Capture audio from any input device, instrument
 or straight from what your Mac is playing, slice it into pieces, and build stacked,
 looping arrangements on a timeline.
 
-![Strata](docs/screenshot.png)
+![Arrangement with stacked tracks, loop brace and the sample editor showing transient slices](docs/screenshots/arrangement.png)
 
 **Requirements:** macOS 15 Sequoia or later. Builds with Swift 5.7+ (Xcode 14.2 or newer).
 
@@ -21,10 +25,22 @@ signs it ad-hoc with the hardened runtime. You can also open `Package.swift` in 
 
 ```sh
 swift test                    # unit tests: stretch timing, slicing, clip remapping, file I/O, mixer
+scripts/screenshots.sh        # regenerate docs/screenshots (debug build captures its own window)
 ```
 
 > Ad-hoc signed builds get a new code signature each time, so macOS may ask again for
 > Microphone / Screen & System Audio Recording permission after a rebuild.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Sample editor zoomed into a slice selection](docs/screenshots/sample-editor.png) | ![Loop recording onto an armed track from a live input](docs/screenshots/loop-recording.png) |
+| **Sample editor:** transient slices, zero-crossing selection, sample-accurate zoom. | **Loop recording:** an armed track records exactly one loop cycle from the live input, with a scope and meters for the source. |
+| ![Clip inspector with stretch modes](docs/screenshots/time-stretch.png) | ![Slices laid out on a new track](docs/screenshots/slices-to-track.png) |
+| **Time-stretch:** per-clip Beats / Tonal / Varispeed modes, fit-to-bars, live stretch badge. | **Slices → Track:** chop a break and lay the slices out on a new track for re-sequencing. |
+
+![Empty project](docs/screenshots/empty-project.png)
 
 ## What it does
 
