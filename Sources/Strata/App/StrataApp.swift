@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import os
 
 @main
 struct StrataApp: App {
@@ -19,12 +20,43 @@ struct StrataApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let log = Logger(subsystem: "com.griffio.strata", category: "lifecycle")
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
+        // Open a new project at launch rather than the iCloud-style Open panel.
+        UserDefaults.standard.register(defaults: ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false])
+        // An audio app must never be reaped by automatic termination while idle.
+        ProcessInfo.processInfo.disableAutomaticTermination("Strata keeps audio capture and projects alive")
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = AudioDevices.shared
+        log.info("Launched")
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
+
+    /// Closing the last project window keeps Strata running, like other document apps.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Clicking the Dock icon with no windows open starts a new project.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { NSDocumentController.shared.newDocument(nil) }
+        return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Records what triggered the quit (key/menu event vs. none = system or signal).
+        let event: String
+        if let e = NSApp.currentEvent {
+            // charactersIgnoringModifiers is only valid for key events.
+            let key = (e.type == .keyDown || e.type == .keyUp) ? (e.charactersIgnoringModifiers ?? "") : "-"
+            event = "type \(e.type.rawValue), key \(key)"
+        } else {
+            event = "no event"
+        }
+        log.notice("Terminating (\(event, privacy: .public))")
     }
 }
 
