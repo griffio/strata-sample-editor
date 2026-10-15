@@ -6,7 +6,7 @@ set -euo pipefail
 
 CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD="$ROOT/build"
+BUILD="${STRATA_BUILD_DIR:-$ROOT/build}"   # override to build without touching ./build
 APP="$BUILD/Strata.app"
 
 cd "$ROOT"
@@ -45,6 +45,13 @@ if [[ "$IDENTITY" == "-" ]]; then
 else
   echo "▸ Signing as \"$IDENTITY\"…"
 fi
-codesign --force --sign "$IDENTITY" --entitlements "$ROOT/Resources/Strata.entitlements" --options runtime --timestamp=none "$APP"
+# Sandboxed by default. STRATA_UNSANDBOXED=1 is for scripts/screenshots.sh only (debug builds).
+ENTITLEMENTS="$ROOT/Resources/Strata.entitlements"
+if [[ "${STRATA_UNSANDBOXED:-0}" == "1" ]]; then
+  [[ "$CONFIG" == "debug" ]] || { echo "STRATA_UNSANDBOXED is only allowed for debug builds" >&2; exit 1; }
+  ENTITLEMENTS="$ROOT/Resources/Strata-Unsandboxed.entitlements"
+  echo "▸ Entitlements: unsandboxed (development only)"
+fi
+codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" --options runtime --timestamp=none "$APP"
 
 echo "✓ $APP"

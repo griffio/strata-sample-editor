@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/docs/screenshots"
 TMP="$(mktemp -d)"
 cd "$ROOT"
-scripts/build-app.sh debug >/dev/null
+STRATA_UNSANDBOXED=1 scripts/build-app.sh debug >/dev/null   # capture hook writes outside the sandbox
 BIN="build/Strata.app/Contents/MacOS/Strata"
 
 shot() {   # name demo steps

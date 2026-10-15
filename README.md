@@ -30,6 +30,17 @@ scripts/screenshots.sh        # regenerate docs/screenshots (debug build capture
 
 ### Permissions
 
+Strata runs in the **App Sandbox** with only three entitlements:
+
+| Entitlement | Why |
+|---|---|
+| `com.apple.security.app-sandbox` | Isolates the app; it can't touch files, network or hardware it wasn't granted. |
+| `com.apple.security.device.audio-input` | Recording and monitoring input devices. |
+| `com.apple.security.files.user-selected.read-write` | Projects and audio you open, save, import, export or drag in. |
+
+No network, camera, Bluetooth, contacts, Accessibility, Input Monitoring or Full Disk Access.
+Settings and autosaves live in `~/Library/Containers/com.griffio.strata`.
+
 - **Microphone** is requested the first time you select an input device.
 - **Screen & System Audio Recording** is requested only when you select *System Audio*.
   After turning Strata on in System Settings › Privacy & Security, relaunch Strata

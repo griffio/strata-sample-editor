@@ -68,6 +68,39 @@ enum DebugSnapshot {
         case "grab": studio.grab(seconds: 2)
         case "arm": if let t = studio.project.tracks.first { studio.toggleArm(t.id) }
         case "wait": break
+        case "libcount":
+            NSLog("%@", "[snapshot] library: \(studio.project.samples.map { "\($0.name) \(String(format: "%.2f", $0.duration))s" }.joined(separator: ", "))")
+        case "sbcheck":
+            let env = ProcessInfo.processInfo.environment
+            NSLog("%@", "[snapshot] sandbox container=\(env["APP_SANDBOX_CONTAINER_ID"] ?? "none") tmp=\(FileManager.default.temporaryDirectory.path)")
+        case "sbsave":
+            let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let url = dir.appendingPathComponent("sandbox-test.strata")
+            if let doc = NSDocumentController.shared.documents.first {
+                doc.save(to: url, ofType: doc.fileType ?? "com.griffio.strata.project", for: .saveToOperation) { err in
+                    let ok = FileManager.default.fileExists(atPath: url.appendingPathComponent("Project.json").path)
+                    NSLog("%@", "[snapshot] save in container error=\(String(describing: err)) projectJSON=\(ok)")
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        case "sbexport":
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("sandbox-mix.wav")
+            let graph = RenderGraph(project: studio.project, stretchCache: { _ in nil })
+            let buffer = PlaybackEngine.bounce(graph: graph, from: 0, to: 2)
+            do {
+                try AudioFileIO.write(buffer, to: url, kind: .wav)
+                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                NSLog("%@", "[snapshot] export in container ok bytes=\(size)")
+                try? FileManager.default.removeItem(at: url)
+            } catch { NSLog("%@", "[snapshot] export in container FAILED \(error)") }
+        case "sbdenied":
+            if let outside = ProcessInfo.processInfo.environment["STRATA_OUTSIDE_FILE"] {
+                let url = URL(fileURLWithPath: outside)
+                let readable = (try? Data(contentsOf: url)) != nil
+                let writeURL = url.deletingLastPathComponent().appendingPathComponent("sandbox-write-probe.txt")
+                let writable = (try? Data("x".utf8).write(to: writeURL)) != nil
+                NSLog("%@", "[snapshot] outside read allowed=\(readable) outside write allowed=\(writable)")
+            }
         case "loopprev":
             if let s = studio.editorSample, s.sliceRanges.count > 6 {
                 studio.editor.selection = s.sliceRanges[1]
