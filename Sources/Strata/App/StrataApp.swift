@@ -218,6 +218,21 @@ private struct SampleCommands: Commands {
             Button("Fade Out") { studio?.editFadeOut() }
             }
             Divider()
+            Group {
+                Menu("Insert Silence") {
+                    ForEach(Studio.silenceLengths, id: \.title) { item in
+                        Button(item.title) { if let s = studio { s.editInsertSilence(seconds: item.seconds(s.project)) } }
+                    }
+                }
+                Button("New Sample from Clipboard") { studio?.newSampleFromClipboard() }
+            }
+            Divider()
+            Group {
+                Button("Detect Tempo") { studio?.detectTempo() }
+                Button("Set Project Tempo from Sample") { studio?.setProjectTempoFromSample() }
+                Button("Match Clips to Project Tempo") { studio?.matchClipsToProjectTempo() }
+            }
+            Divider()
             Button("Select All Audio") { studio?.editSelectAll() }
             Button("Preview   (P)") { studio?.previewEditorSelection() }
         }

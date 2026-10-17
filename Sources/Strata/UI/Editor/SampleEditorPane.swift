@@ -160,6 +160,8 @@ private struct EditorInspector: View {
                     ClipInspector(clip: clip)
                     Rectangle().fill(Theme.hairline).frame(height: 1)
                 }
+                tempo
+                Rectangle().fill(Theme.hairline).frame(height: 1)
                 slicing
             }
             .padding(14)
@@ -210,8 +212,42 @@ private struct EditorInspector: View {
                 .foregroundColor(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
-            if let tempo = sampleTempoHint {
-                Text(tempo).font(.system(size: 10, weight: .medium)).foregroundColor(Theme.textSecondary)
+        }
+    }
+
+    private var tempo: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionCaption(text: "Tempo", trailing: AnyView(
+                ChipButton(title: "Detect", help: studio.editRange != nil ? "Detect the tempo of the selection" : "Detect the sample’s tempo") {
+                    studio.detectTempo()
+                }))
+            if let t = studio.editorTempo {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(String(format: "%.2f", t.estimate.bpm))
+                        .font(Theme.mono(15, weight: .semibold)).foregroundColor(Theme.text)
+                    Text("BPM").font(.system(size: 9, weight: .bold)).foregroundColor(Theme.textTertiary)
+                    Text(t.estimate.bars.map { "· \($0) bar\($0 == 1 ? "" : "s")" } ?? "· not a loop")
+                        .font(.system(size: 10.5, weight: .medium)).foregroundColor(Theme.textSecondary)
+                    Spacer(minLength: 4)
+                    ChipButton(title: "½×", help: "Half time") { studio.scaleDetectedTempo(by: 0.5) }
+                    ChipButton(title: "2×", help: "Double time") { studio.scaleDetectedTempo(by: 2) }
+                }
+                .accessibilityElement(children: .combine)
+                HStack(spacing: 6) {
+                    InspectorButton(title: "Set Project", symbol: "metronome",
+                                    disabled: abs(t.estimate.bpm - studio.project.bpm) < 0.005) { studio.setProjectTempoFromSample() }
+                        .help("Set the project tempo to this sample’s tempo")
+                    InspectorButton(title: editor.clipID != nil ? "Match Clip" : "Match Clips", symbol: "arrow.left.and.right") {
+                        studio.matchClipsToProjectTempo()
+                    }
+                    .help(editor.clipID != nil ? "Stretch this clip so it plays in time at the project tempo"
+                                               : "Stretch every clip of this sample so it plays in time at the project tempo")
+                }
+                if t.range != nil {
+                    Text("Detected from the selection").font(.system(size: 9.5)).foregroundColor(Theme.textTertiary)
+                }
+            } else if let hint = sampleTempoHint {
+                Text(hint).font(.system(size: 10, weight: .medium)).foregroundColor(Theme.textSecondary)
             }
         }
     }
@@ -303,6 +339,28 @@ private struct ClipInspector: View {
             Spacer()
             content()
         }
+    }
+}
+
+/// Small text button for inline inspector actions.
+private struct ChipButton: View {
+    let title: String
+    var help: String = ""
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                .padding(.horizontal, 7)
+                .frame(minHeight: 20)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(hover ? 0.12 : 0.07)))
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(Theme.text)
+        .help(help)
+        .onHover { hover = $0 }
     }
 }
 

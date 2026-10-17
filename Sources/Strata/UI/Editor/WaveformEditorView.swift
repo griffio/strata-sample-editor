@@ -368,17 +368,19 @@ final class WaveformEditorNSView: NSView {
         }
         if let sel = ed.selection, sel.count > 0 {
             let x0 = ed.x(Double(sel.lowerBound)), x1 = ed.x(Double(sel.upperBound))
-            if abs(p.x - x0) < 5 { drag = .edgeLow; return }
-            if abs(p.x - x1) < 5 { drag = .edgeHigh; return }
+            if abs(p.x - x0) < 5 { drag = .edgeLow; ed.anchor = sel.upperBound; return }
+            if abs(p.x - x1) < 5 { drag = .edgeHigh; ed.anchor = sel.lowerBound; return }
             if event.modifierFlags.contains(.shift) {
                 let f = snapped(frame, event)
                 ed.selection = min(sel.lowerBound, f)..<max(sel.upperBound, f)
                 drag = f < sel.lowerBound ? .edgeLow : .edgeHigh
+                ed.anchor = f < sel.lowerBound ? sel.upperBound : sel.lowerBound
                 return
             }
         }
         let anchor = snapped(frame, event)
         ed.selection = anchor..<anchor
+        ed.anchor = anchor
         drag = .select(anchor: anchor)
         // One-shot previews restart from the click; a looping preview keeps playing and
         // follows the new selection once it is dragged out.
@@ -497,6 +499,21 @@ final class WaveformEditorNSView: NSView {
         menu.add("Silence", symbol: "speaker.slash", enabled: hasSel) { self.studio.editSilence() }
         menu.add("Selection to New Sample", symbol: "plus.square.on.square", enabled: hasSel) { self.studio.editSelectionToNewSample() }
         menu.addItem(.separator())
+        menu.add("Cut", symbol: "scissors", enabled: hasSel) { self.studio.editCut() }
+        menu.add("Copy", symbol: "doc.on.doc", enabled: hasSel) { self.studio.editCopy() }
+        menu.add(hasSel ? "Paste over Selection" : "Paste at Cursor", symbol: "doc.on.clipboard",
+                 enabled: AudioClipboard.buffer != nil) { self.studio.editPaste() }
+        menu.submenu("Insert Silence", symbol: "rectangle.dashed") { sub in
+            if let r = studio.editRange {
+                let seconds = Double(r.count) / AudioSpec.sampleRate
+                sub.add("Selection Length (\(formatDuration(seconds)))") { self.studio.editInsertSilence(seconds: seconds) }
+                sub.addItem(.separator())
+            }
+            for item in Studio.silenceLengths {
+                sub.add(item.title) { self.studio.editInsertSilence(seconds: item.seconds(self.studio.project)) }
+            }
+        }
+        menu.addItem(.separator())
         menu.add("Reverse", symbol: "arrow.uturn.backward") { self.studio.editReverse() }
         menu.add("Normalize", symbol: "waveform.badge.plus") { self.studio.editNormalize() }
         menu.add("Fade In", symbol: "chart.line.uptrend.xyaxis") { self.studio.editFadeIn() }
@@ -507,6 +524,25 @@ final class WaveformEditorNSView: NSView {
         menu.add("Auto-Slice at Transients", symbol: "waveform.path.ecg") { self.studio.autoSlice() }
         menu.add("Clear Slices", enabled: !s.slices.isEmpty) { self.studio.clearSlices() }
         return menu
+    }
+}
+
+// MARK: - Edit menu (the editor is first responder after a click)
+
+extension WaveformEditorNSView: NSMenuItemValidation {
+    @objc func cut(_ sender: Any?) { studio.editCut() }
+    @objc func copy(_ sender: Any?) { studio.editCopy() }
+    @objc func paste(_ sender: Any?) { studio.editPaste() }
+    @objc func delete(_ sender: Any?) { studio.editDeleteSelection() }
+    override func selectAll(_ sender: Any?) { studio.editSelectAll() }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(cut(_:)), #selector(copy(_:)), #selector(delete(_:)): return studio.editRange != nil
+        case #selector(paste(_:)): return sample != nil && AudioClipboard.buffer != nil
+        case #selector(selectAll(_:)): return sample != nil
+        default: return true
+        }
     }
 }
 

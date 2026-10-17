@@ -33,7 +33,7 @@ identity, see [Permissions](#permissions)). You can also open `Package.swift` in
 ### Development
 
 ```sh
-swift test                    # unit tests: stretch timing, slicing, clip remapping, file I/O, mixer
+swift test                    # unit tests: stretch timing, slicing, tempo, clip remapping, file I/O, mixer
 scripts/screenshots.sh        # regenerate docs/screenshots (STRATA_SCREENSHOT_DIR=… to preview elsewhere)
 ```
 
@@ -123,14 +123,21 @@ Assistant also works for local use.
 **Sample editor**
 - Stereo waveform with an overview strip. Zooms from the whole file down to individual
   samples, with RMS + peak rendering and optional zero-crossing snap.
-- Destructive edits (trim, delete, silence, reverse, normalize, fades, gain), all undoable.
-  Timeline clips that use the sample are remapped, so they keep playing the same audio.
+- Destructive edits (trim, delete, silence, reverse, normalize, fades, gain), cut / copy /
+  paste (also between projects) and insert silence, all undoable. Timeline clips that use
+  the sample are remapped, so they keep playing the same audio; a clip spanning a paste is
+  split around the new audio.
+- Keyboard editing: ← / → jump between slices (⇧ extends the selection), Tab / ⇧Tab step
+  through transients, [ / ] nudge the selection edge to the next zero crossing.
 - Preview the selection one-shot or looped. A looping preview follows the selection live:
   drag a new region or adjust an edge and playback moves to it without stopping.
 - Slicing: automatic transient detection with a sensitivity control, equal divisions,
   beat-grid slicing, and manual markers. Click a slice in the ruler to audition it
   (MPC-style). Send slices to a new track or to the Library, or ⌥-drag a selection
   onto a track.
+- Tempo detection for the sample or selection. Loops snap to an exact whole number of bars
+  (½× / 2× for half or double time); set the project tempo from it, or stretch the sample's
+  clips to play in time at the project tempo.
 - Clip inspector: gain, fades, stretch %, fit-to-bars, stretch mode.
 
 **Project & export**

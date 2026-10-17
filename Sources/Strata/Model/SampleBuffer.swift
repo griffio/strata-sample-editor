@@ -86,13 +86,22 @@ final class SampleBuffer: Identifiable {
 
     func inserting(_ other: SampleBuffer, at position: Int) -> SampleBuffer {
         let p = min(max(0, position), frameCount)
-        let out = SampleBuffer(frameCount: frameCount + other.frameCount)
+        return replacing(range: p..<p, with: other)
+    }
+
+    /// Replaces `range` with `other` in one splice (an empty range inserts), de-clicking
+    /// both seams.
+    func replacing(range: Range<Int>, with other: SampleBuffer) -> SampleBuffer {
+        let r = range.clamped(to: 0..<frameCount)
+        let out = SampleBuffer(frameCount: frameCount - r.count + other.frameCount)
         for ch in 0..<2 {
             let src = channel(ch), dst = out.channel(ch)
-            dst.assign(from: src, count: p)
-            (dst + p).assign(from: other.channel(ch), count: other.frameCount)
-            (dst + p + other.frameCount).assign(from: src + p, count: frameCount - p)
+            dst.assign(from: src, count: r.lowerBound)
+            (dst + r.lowerBound).assign(from: other.channel(ch), count: other.frameCount)
+            (dst + r.lowerBound + other.frameCount).assign(from: src + r.upperBound, count: frameCount - r.upperBound)
         }
+        out.declick(at: r.lowerBound)
+        out.declick(at: r.lowerBound + other.frameCount)
         return out
     }
 
@@ -199,6 +208,25 @@ final class SampleBuffer: Identifiable {
             }
         }
         return best
+    }
+
+    /// The next zero crossing strictly after (or before) `frame`, within `limit` frames.
+    /// Crossings are reported as in `nearestZeroCrossing`: the first frame of the new sign.
+    func zeroCrossing(from frame: Int, forward: Bool, limit: Int = 48_000) -> Int? {
+        func crosses(_ i: Int) -> Bool {
+            let a = left[i - 1] + right[i - 1], b = left[i] + right[i]
+            return (a <= 0 && b > 0) || (a >= 0 && b < 0)
+        }
+        if forward {
+            var i = max(1, frame + 1)
+            let end = min(frameCount - 1, frame + limit)
+            while i <= end { if crosses(i) { return i }; i += 1 }
+        } else {
+            var i = min(frameCount - 1, frame - 1)
+            let end = max(1, frame - limit)
+            while i >= end { if crosses(i) { return i }; i -= 1 }
+        }
+        return nil
     }
 
     static func concatenate(_ buffers: [SampleBuffer]) -> SampleBuffer {

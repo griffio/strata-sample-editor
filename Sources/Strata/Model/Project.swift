@@ -168,6 +168,45 @@ struct Project: Equatable {
         reconcileClips(forSample: id)
     }
 
+    /// Re-targets clips after `count` frames were inserted at `position`, so every clip keeps
+    /// playing the same audio. A clip that spans the insertion point is split around it.
+    mutating func remapClips(forSample id: UUID, inserted count: Int, at position: Int) {
+        guard count > 0 else { return }
+        for t in tracks.indices {
+            var kept: [Clip] = []
+            for c in tracks[t].clips {
+                guard c.sampleID == id else { kept.append(c); continue }
+                let end = c.sourceStart + c.sourceLength
+                if end <= position { kept.append(c); continue }
+                if c.sourceStart >= position {
+                    var moved = c
+                    moved.sourceStart += count
+                    kept.append(moved)
+                    continue
+                }
+                var head = c, tail = c
+                head.sourceLength = position - c.sourceStart
+                tail.id = UUID()
+                tail.start = c.start + Double(head.sourceLength) / AudioSpec.sampleRate * c.stretch
+                tail.sourceStart = position + count
+                tail.sourceLength = end - position
+                // Too short to keep as a clip of its own: the few frames are dropped.
+                let keepHead = head.sourceLength > 16, keepTail = tail.sourceLength > 16
+                if keepHead && keepTail {
+                    head.fadeOut = 0
+                    tail.fadeIn = 0
+                }
+                head.fadeIn = min(head.fadeIn, head.duration)
+                tail.fadeOut = min(tail.fadeOut, tail.duration)
+                if keepHead { kept.append(head) }
+                if keepTail { kept.append(tail) }
+            }
+            tracks[t].clips = kept
+            tracks[t].sortClips()
+        }
+        reconcileClips(forSample: id)
+    }
+
     /// Keeps clip references valid after a sample's length changed.
     mutating func reconcileClips(forSample id: UUID) {
         guard let s = sample(id) else {

@@ -63,6 +63,12 @@ final class EditorState: ObservableObject {
     @Published var snapToZeroCrossings = true
     @Published var sensitivity: Double = 0.55
     @Published var loopPreview = false
+    /// Last detected tempo; only shown while its buffer is still the sample's audio.
+    @Published var tempo: DetectedTempo?
+    /// The fixed edge of the selection; keyboard edits move the other (active) edge.
+    var anchor: Int?
+    /// Onsets for Tab navigation, cached per buffer and sensitivity.
+    var transientCache: (bufferID: UUID, sensitivity: Double, onsets: [Int])?
     var width: CGFloat = 800
 
     func x(_ frame: Double) -> CGFloat { CGFloat((frame - scrollFrame) / framesPerPixel) }
@@ -84,6 +90,26 @@ final class EditorState: ObservableObject {
         let visible = Double(width) * framesPerPixel
         return min(max(0, s), max(0, Double(totalFrames) - visible * 0.5))
     }
+
+    /// Scrolls just enough to bring `frame` into view (centred when it was off-screen).
+    func reveal(_ frame: Int, totalFrames: Int) {
+        let x = self.x(Double(frame))
+        guard x < width * 0.04 || x > width * 0.96 else { return }
+        scrollFrame = clampScroll(Double(frame) - Double(width) * framesPerPixel / 2, totalFrames: totalFrames)
+    }
+
+    /// The selection edge keyboard edits move: the one opposite the anchor (the end by default).
+    var activeEdgeIsStart: Bool {
+        guard let sel = selection, sel.count > 0 else { return false }
+        return anchor == sel.upperBound
+    }
+}
+
+struct DetectedTempo: Equatable {
+    var bufferID: UUID
+    /// The analysed region (nil for the whole sample).
+    var range: Range<Int>?
+    var estimate: TempoEstimate
 }
 
 struct StudioAlert: Identifiable {
@@ -538,6 +564,7 @@ final class Studio: ObservableObject {
         let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
         guard mods.isEmpty || mods == .shift else { return false }
         let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        if focus == .editor, editorSample != nil, handleEditorKey(event, chars: chars, shift: mods == .shift) { return true }
         switch event.keyCode {
         case 49: togglePlay(); return true                       // space
         case 36, 76: returnToStart(); return true                 // return / enter
@@ -563,6 +590,27 @@ final class Studio: ObservableObject {
         case "f": followPlayhead.toggle(); showToast(followPlayhead ? "Follow Playhead On" : "Follow Playhead Off")
         case "=", "+": zoom(1.4)
         case "-": zoom(1 / 1.4)
+        default: return false
+        }
+        return true
+    }
+
+    #if DEBUG
+    /// Scripted runs can't make the window key, so they hand key events to the handler directly.
+    func debugHandleKey(_ event: NSEvent) -> Bool { handleKey(event) }
+    #endif
+
+    /// Sample-editor navigation; everything else falls through to the shared shortcuts.
+    private func handleEditorKey(_ event: NSEvent, chars: String, shift: Bool) -> Bool {
+        switch event.keyCode {
+        case 123: editorStepSlice(-1, extend: shift); return true        // ←
+        case 124: editorStepSlice(1, extend: shift); return true         // →
+        case 48: editorStepTransient(shift ? -1 : 1); return true        // tab
+        default: break
+        }
+        switch chars {
+        case "[": editorNudgeEdgeToZeroCrossing(-1)
+        case "]": editorNudgeEdgeToZeroCrossing(1)
         default: return false
         }
         return true

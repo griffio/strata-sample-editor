@@ -150,6 +150,18 @@ enum DebugSnapshot {
                 studio.updateClip(c.id, "Stretch") { $0.stretch = 0.5 }
             }
         case "slicetrack": studio.slicesToTrack()
+        case "tempo": studio.detectTempo()
+        case "edfocus":
+            // Focus the waveform like a click would, with the cursor at the start.
+            if let v = studio.window?.contentView.flatMap(findWaveform) { studio.window?.makeFirstResponder(v) }
+            studio.focus = .editor
+            studio.editor.selection = 0..<0
+        case let k where k.hasPrefix("key-"):
+            postKey(String(k.dropFirst(4)), studio: studio)
+        case "edstate":
+            let s = studio.editorSample
+            let clips = studio.project.tracks.flatMap(\.clips).filter { $0.sampleID == s?.id }
+            NSLog("%@", "[snapshot] editor sample=\(s?.name ?? "-") frames=\(s?.frameCount ?? 0) slices=\(s?.slices.count ?? 0) sel=\(studio.editor.selection.map { "\($0)" } ?? "nil") anchor=\(studio.editor.anchor.map(String.init) ?? "nil") clipboard=\(AudioClipboard.buffer?.frameCount ?? 0) clips=\(clips.map { "\($0.sourceStart)+\($0.sourceLength)@\(String(format: "%.3f", $0.start))" }) undo=\(studio.undoManager?.undoActionName ?? "-") tempo=\(studio.editorTempo.map { "\($0.estimate)" } ?? "nil") bpm=\(studio.project.bpm) responder=\(studio.window?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") key=\(studio.window?.isKeyWindow ?? false) active=\(NSApp.isActive)")
         case "devsource":
             studio.capture.debugStartTestSignal(sourceUID: AudioDevices.shared.inputs.first { $0.isVirtual }?.uid)
         case "undo":
@@ -173,6 +185,52 @@ enum DebugSnapshot {
             NSLog("%@", "[snapshot] step=\(step) playing=\(studio.isPlaying) pos=\(String(format: "%.3f", studio.positionSeconds)) master=\(studio.meters.master) engineRunning=\(studio.engine.isRunning)")
             run(steps: steps, index: index + 1, studio: studio, prefix: prefix)
         }
+    }
+
+    private static func findWaveform(_ v: NSView) -> NSView? {
+        if v is WaveformEditorNSView { return v }
+        for sub in v.subviews { if let w = findWaveform(sub) { return w } }
+        return nil
+    }
+
+    /// Queues a real key-down so it goes through the key monitor and menu key equivalents.
+    /// Names: right, left, shift-right, shift-left, tab, shift-tab, [, ], cmd-x/c/v/a/z.
+    private static func postKey(_ name: String, studio: Studio) {
+        guard let w = studio.window else { return }
+        var flags: NSEvent.ModifierFlags = []
+        var key = name
+        if key.hasPrefix("shift-") { flags.insert(.shift); key.removeFirst(6) }
+        if key.hasPrefix("cmd-") { flags.insert(.command); key.removeFirst(4) }
+        let special: [String: (UInt16, Int)] = ["right": (124, NSRightArrowFunctionKey), "left": (123, NSLeftArrowFunctionKey),
+                                                "tab": (48, 9)]
+        let codes: [String: UInt16] = ["[": 33, "]": 30, "x": 7, "c": 8, "v": 9, "a": 0, "z": 6]
+        let chars: String, code: UInt16
+        if let (c, u) = special[key] { code = c; chars = String(Character(UnicodeScalar(UInt16(u))!)) }
+        else { code = codes[key] ?? 0; chars = key }
+        guard let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: w.windowNumber, context: nil, characters: chars,
+                                       charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) else { return }
+        if flags.contains(.command) {
+            // Route as AppKit does for a menu key equivalent: the real menu item's action,
+            // validated and sent to the first responder.
+            guard let item = NSApp.mainMenu.flatMap({ menuItem(in: $0, key: key) }), let action = item.action else {
+                NSLog("%@", "[snapshot] no menu item for ⌘\(key)"); return
+            }
+            let responder = w.firstResponder
+            let valid = (responder as? NSMenuItemValidation)?.validateMenuItem(item) ?? true
+            let handled = valid && (responder?.tryToPerform(action, with: item) ?? false)
+            NSLog("%@", "[snapshot] ⌘\(key) → \(item.title) \(NSStringFromSelector(action)) target=\(item.target.map { "\($0)" } ?? "first responder") valid=\(valid) handled=\(handled)")
+        } else {
+            NSLog("%@", "[snapshot] key \(name) handled=\(studio.debugHandleKey(e))")
+        }
+    }
+
+    private static func menuItem(in menu: NSMenu, key: String) -> NSMenuItem? {
+        for item in menu.items {
+            if item.keyEquivalent == key && item.keyEquivalentModifierMask == .command { return item }
+            if let sub = item.submenu, let found = menuItem(in: sub, key: key) { return found }
+        }
+        return nil
     }
 
     /// Closes a scripted-run document without saving and removes its autosave.

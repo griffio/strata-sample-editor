@@ -191,8 +191,11 @@ extension Studio {
 
     // MARK: - Destructive sample edits (each is one undo step)
 
-    /// - Parameter removed: source ranges deleted by the edit (nil when the length is unchanged).
-    private func applyEdit(_ name: String, removed: [Range<Int>]? = nil, _ transform: (Sample) -> (SampleBuffer, [Int])?) {
+    /// - Parameters:
+    ///   - removed: source ranges deleted by the edit (nil when the length is unchanged).
+    ///   - inserted: frames inserted by the edit, in coordinates after `removed` was taken out.
+    private func applyEdit(_ name: String, removed: [Range<Int>]? = nil, inserted: (at: Int, count: Int)? = nil,
+                           _ transform: (Sample) -> (SampleBuffer, [Int])?) {
         guard let id = editor.sampleID, let s = project.sample(id), let (buffer, slices) = transform(s) else { return }
         DispatchQueue.global(qos: .userInitiated).async { buffer.preparePeaks() }
         perform(name) { p in
@@ -200,6 +203,7 @@ extension Studio {
             p.samples[i].buffer = buffer
             p.samples[i].slices = slices.filter { $0 > 0 && $0 < buffer.frameCount }.sorted()
             if let removed = removed { p.remapClips(forSample: id, removed: removed) }
+            if let ins = inserted { p.remapClips(forSample: id, inserted: ins.count, at: ins.at) }
         }
     }
 
@@ -218,9 +222,9 @@ extension Studio {
         if let s = editorSample { editor.fit(frames: s.frameCount) }
     }
 
-    func editDeleteSelection() {
+    func editDeleteSelection(name: String = "Delete Audio") {
         guard let r = editRange else { return }
-        applyEdit("Delete Audio", removed: [r]) { s in
+        applyEdit(name, removed: [r]) { s in
             (s.buffer.deleting(range: r),
              s.slices.filter { !r.contains($0) }.map { $0 >= r.upperBound ? $0 - r.count : $0 })
         }
@@ -244,6 +248,200 @@ extension Studio {
     func editSelectAll() {
         guard let s = editorSample else { return }
         editor.selection = 0..<s.frameCount
+    }
+
+    // MARK: - Clipboard
+
+    func editCopy() {
+        guard let s = editorSample, let r = editRange else { return }
+        AudioClipboard.buffer = s.buffer.copy(range: r)
+        showToast("Copied \(formatDuration(Double(r.count) / AudioSpec.sampleRate))")
+    }
+
+    func editCut() {
+        guard editRange != nil else { return }
+        editCopy()
+        editDeleteSelection(name: "Cut")
+    }
+
+    /// Pastes at the cursor, replacing the selected audio if there is any.
+    func editPaste() {
+        guard let audio = AudioClipboard.buffer, audio.frameCount > 0 else { return }
+        editSplice(audio, name: "Paste", replacing: true)
+        showToast("Pasted \(formatDuration(audio.duration))")
+    }
+
+    /// Inserts silence at the cursor (or before the selection, pushing it later).
+    func editInsertSilence(seconds: Double) {
+        let frames = Int((seconds * AudioSpec.sampleRate).rounded())
+        guard frames > 0 else { return }
+        editSplice(SampleBuffer(frameCount: frames), name: "Insert Silence", replacing: false)
+    }
+
+    /// Musical Insert Silence lengths, resolved against the project tempo when chosen.
+    static let silenceLengths: [(title: String, seconds: (Project) -> Double)] = [
+        ("1 Beat", { $0.secondsPerBeat }), ("1 Bar", { $0.secondsPerBar }), ("1 Second", { _ in 1 }),
+    ]
+
+    func newSampleFromClipboard() {
+        guard let audio = AudioClipboard.buffer, audio.frameCount > 0 else { return }
+        addSample(audio, name: "Clipboard", origin: "Pasted audio")
+    }
+
+    /// Splices `audio` in at the selection start and selects it. Clips and slice markers
+    /// after the splice move with their audio.
+    private func editSplice(_ audio: SampleBuffer, name: String, replacing: Bool) {
+        guard let s = editorSample else { return }
+        let sel = (editor.selection ?? s.frameCount..<s.frameCount).clamped(to: 0..<s.frameCount)
+        let cut = replacing ? sel : sel.lowerBound..<sel.lowerBound
+        let at = cut.lowerBound, n = audio.frameCount
+        applyEdit(name, removed: cut.isEmpty ? nil : [cut], inserted: (at, n)) { s in
+            let slices = s.slices.filter { !cut.contains($0) }
+                .map { $0 >= cut.upperBound ? $0 - cut.count : $0 }
+                .map { $0 >= at ? $0 + n : $0 }
+            return (s.buffer.replacing(range: cut, with: audio), slices)
+        }
+        editor.selection = at..<(at + n)
+        editor.anchor = nil
+        if let s = editorSample { editor.reveal(at + n, totalFrames: s.frameCount) }
+    }
+
+    // MARK: - Tempo
+
+    /// Detects the tempo of the selection (or the whole sample) in the background.
+    func detectTempo() {
+        guard let s = editorSample else { return }
+        let range = editRange, buffer = s.buffer
+        let signature = (project.beatsPerBar, project.beatUnit)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let estimate = TransientDetector.estimateTempo(buffer: buffer, range: range,
+                                                           beatsPerBar: signature.0, beatUnit: signature.1)
+            DispatchQueue.main.async {
+                guard let e = estimate else {
+                    self.editor.tempo = nil
+                    self.showToast("No steady beat found")
+                    return
+                }
+                self.editor.tempo = DetectedTempo(bufferID: buffer.id, range: range, estimate: e)
+            }
+        }
+    }
+
+    /// The detected tempo, while it still describes the sample in the editor.
+    var editorTempo: DetectedTempo? {
+        guard let t = editor.tempo, let s = editorSample, t.bufferID == s.buffer.id else { return nil }
+        return t
+    }
+
+    /// ½× / 2×: the same audio read in half or double time.
+    func scaleDetectedTempo(by factor: Double) {
+        guard var t = editorTempo else { return }
+        let scaled = t.estimate.scaled(by: factor)
+        guard (30...300).contains(scaled.bpm) else { return }
+        t.estimate = scaled
+        editor.tempo = t
+    }
+
+    func setProjectTempoFromSample() {
+        guard let t = editorTempo else { showToast("Detect the sample’s tempo first"); return }
+        setBPM(t.estimate.bpm)
+        showToast(String(format: "Project tempo %.2f BPM", project.bpm))
+    }
+
+    /// Stretches the opened clip (or every clip of this sample) so the sample's detected
+    /// tempo plays at the project tempo.
+    func matchClipsToProjectTempo() {
+        guard let t = editorTempo, let s = editorSample else { showToast("Detect the sample’s tempo first"); return }
+        let ratio = min(16, max(0.0625, t.estimate.bpm / project.bpm))
+        let targets = editor.clipID.map { [$0] } ?? project.tracks.flatMap(\.clips).filter { $0.sampleID == s.id }.map(\.id)
+        guard !targets.isEmpty else { showToast("No clips use this sample"); return }
+        perform("Match Tempo") { p in
+            for id in targets { p.updateClip(id) { $0.stretch = ratio } }
+        }
+        showToast(String(format: "Stretched %d clip%@ to %.1f BPM", targets.count, targets.count == 1 ? "" : "s", project.bpm))
+    }
+
+    // MARK: - Keyboard navigation
+
+    /// The first mark strictly beyond `frame` in `direction` (sorted `marks`), nil past the last.
+    static func mark(after frame: Int, direction: Int, in marks: [Int]) -> Int? {
+        direction > 0 ? marks.first { $0 > frame } : marks.last { $0 < frame }
+    }
+
+    /// The selection after moving its active edge to `target`, and the new anchor. A cursor
+    /// (empty selection) grows from where it is.
+    static func extend(_ sel: Range<Int>, activeIsStart: Bool, to target: Int) -> (Range<Int>, anchor: Int) {
+        let fixed = activeIsStart ? sel.upperBound : sel.lowerBound
+        return (min(fixed, target)..<max(fixed, target), fixed)
+    }
+
+    /// ← / →: jump to the previous / next slice boundary; ⇧ extends the selection.
+    func editorStepSlice(_ direction: Int, extend: Bool) {
+        guard let s = editorSample else { return }
+        editorJump(direction, extend: extend, marks: [0] + s.slices + [s.frameCount], sample: s)
+    }
+
+    /// Tab / ⇧Tab: jump to the next / previous transient.
+    func editorStepTransient(_ direction: Int) {
+        guard let s = editorSample else { return }
+        let onsets = cachedTransients(s)
+        guard !onsets.isEmpty else { showToast("No transients found — raise sensitivity"); return }
+        editorJump(direction, extend: false, marks: onsets, sample: s)
+    }
+
+    private func editorJump(_ direction: Int, extend: Bool, marks: [Int], sample s: Sample) {
+        guard let sel = editor.selection else {
+            // No cursor yet: start from the edge of the view.
+            let from = direction > 0 ? Int(editor.scrollFrame) - 1 : Int(editor.frame(editor.width)) + 1
+            if let t = Self.mark(after: from, direction: direction, in: marks) { placeEditorCursor(t, sample: s) }
+            return
+        }
+        if extend {
+            let startActive = editor.activeEdgeIsStart
+            let edge = startActive ? sel.lowerBound : sel.upperBound
+            guard let t = Self.mark(after: edge, direction: direction, in: marks) else { return }
+            let (range, anchor) = Self.extend(sel, activeIsStart: startActive, to: t)
+            editor.selection = range
+            editor.anchor = anchor
+            editor.reveal(t, totalFrames: s.frameCount)
+        } else {
+            let from = direction > 0 ? sel.upperBound : sel.lowerBound
+            guard let t = Self.mark(after: from, direction: direction, in: marks) else { return }
+            placeEditorCursor(t, sample: s)
+        }
+    }
+
+    /// [ / ]: move the active selection edge (or the cursor) to the previous / next zero crossing.
+    func editorNudgeEdgeToZeroCrossing(_ direction: Int) {
+        guard let s = editorSample, let sel = editor.selection else { return }
+        let startActive = editor.activeEdgeIsStart
+        let edge = startActive ? sel.lowerBound : sel.upperBound
+        guard let z = s.buffer.zeroCrossing(from: edge, forward: direction > 0) else { return }
+        if sel.isEmpty {
+            placeEditorCursor(z, sample: s)
+        } else {
+            let (range, anchor) = Self.extend(sel, activeIsStart: startActive, to: z)
+            editor.selection = range
+            editor.anchor = anchor
+            editor.reveal(z, totalFrames: s.frameCount)
+        }
+    }
+
+    /// Moves the cursor; a running one-shot preview restarts from it, as a click does.
+    private func placeEditorCursor(_ frame: Int, sample s: Sample) {
+        editor.selection = frame..<frame
+        editor.anchor = nil
+        editor.reveal(frame, totalFrames: s.frameCount)
+        if clock.previewFrame != nil && !isLoopPreviewing && frame < s.frameCount {
+            previewSample(s.id, range: frame..<s.frameCount, fromEditor: true)
+        }
+    }
+
+    private func cachedTransients(_ s: Sample) -> [Int] {
+        if let c = editor.transientCache, c.bufferID == s.buffer.id, c.sensitivity == editor.sensitivity { return c.onsets }
+        let onsets = TransientDetector.detect(in: s.buffer, sensitivity: editor.sensitivity)
+        editor.transientCache = (s.buffer.id, editor.sensitivity, onsets)
+        return onsets
     }
 
     // MARK: - Slicing
@@ -391,4 +589,10 @@ extension Studio {
         editor.framesPerPixel = max(0.02, Double(r.count) / Double(max(100, editor.width)) * 1.1)
         editor.scrollFrame = max(0, Double(r.lowerBound) - Double(r.count) * 0.05)
     }
+}
+
+/// App-wide audio clipboard for the sample editor, so audio can be pasted across projects.
+/// Buffers are immutable, so holding one shares it safely.
+enum AudioClipboard {
+    static var buffer: SampleBuffer?
 }
